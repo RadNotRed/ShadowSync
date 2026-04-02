@@ -100,9 +100,10 @@ Flow:
 
 1. Push to `main` or run the `Draft Release` workflow manually.
 2. The workflow reads `package.version` from `Cargo.toml` and uses `v<version>` as the tag.
-3. It runs tests, builds the release binary, creates a portable zip, and compiles the Windows installer.
-4. It asks GitHub for generated release notes, then creates or updates a draft release.
-5. It uploads both release assets to that draft release.
+3. If that version tag already exists on an older commit, the workflow skips publishing until you bump the Cargo version.
+4. It runs tests, builds the release binary, creates a portable zip, and compiles the Windows installer.
+5. It asks GitHub for generated release notes, then creates or updates a draft release.
+6. It uploads both release assets to that draft release.
 
 Release artifacts land in `target\release`:
 

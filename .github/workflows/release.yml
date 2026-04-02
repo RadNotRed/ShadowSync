@@ -44,16 +44,35 @@ jobs:
           "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
           "tag=v$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
 
+      - name: Check release tag state
+        id: tag_state
+        shell: pwsh
+        run: |
+          $tag = "${{ steps.version.outputs.tag }}"
+          $tagSha = git rev-list -n 1 $tag 2>$null
+
+          if (-not $tagSha) {
+            "mode=new" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          } elseif ($tagSha -eq $env:GITHUB_SHA) {
+            "mode=rerun" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          } else {
+            "mode=skip" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+            Write-Host "Version tag $tag already exists on commit $tagSha. Skipping release for unchanged Cargo version."
+          }
+
       - name: Test
+        if: steps.tag_state.outputs.mode != 'skip'
         shell: pwsh
         run: cargo test --locked
 
       - name: Build packages
+        if: steps.tag_state.outputs.mode != 'skip'
         shell: pwsh
         run: .\.github\scripts\package-release.ps1 -RepoRoot $pwd.Path
 
       - name: Generate release notes
         id: notes
+        if: steps.tag_state.outputs.mode != 'skip'
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
@@ -66,6 +85,7 @@ jobs:
           "path=$notesPath" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
 
       - name: Create or update draft release
+        if: steps.tag_state.outputs.mode != 'skip'
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
@@ -87,6 +107,7 @@ jobs:
           }
 
       - name: Upload release assets
+        if: steps.tag_state.outputs.mode != 'skip'
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
