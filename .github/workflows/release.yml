@@ -1,0 +1,103 @@
+name: Draft Release
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: draft-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  draft-release:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: choco install innosetup --no-progress --yes
+
+      - name: Read package version
+        id: version
+        shell: pwsh
+        run: |
+          $manifest = Get-Content -LiteralPath Cargo.toml -Raw
+          if ($manifest -match '(?s)\[package\].*?version\s*=\s*"([^"]+)"') {
+            $version = $matches[1]
+          } else {
+            throw "Unable to read package version from Cargo.toml"
+          }
+
+          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "tag=v$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+      - name: Test
+        shell: pwsh
+        run: cargo test --locked
+
+      - name: Build packages
+        shell: pwsh
+        run: .\.github\scripts\package-release.ps1 -RepoRoot $pwd.Path
+
+      - name: Generate release notes
+        id: notes
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "v${{ steps.version.outputs.version }}"
+          $notesJson = gh api "repos/$env:GITHUB_REPOSITORY/releases/generate-notes" -X POST -f tag_name="$tag" -f target_commitish="$env:GITHUB_SHA"
+          $notes = ($notesJson | ConvertFrom-Json).body
+          $notesPath = Join-Path $env:RUNNER_TEMP "release-notes.md"
+          Set-Content -LiteralPath $notesPath -Value $notes -NoNewline
+          "path=$notesPath" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+      - name: Create or update draft release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "v${{ steps.version.outputs.version }}"
+          $notesPath = "${{ steps.notes.outputs.path }}"
+
+          gh release view $tag --json tagName *> $null
+          $releaseExists = $LASTEXITCODE -eq 0
+
+          if ($releaseExists) {
+            gh release edit $tag --draft --title $tag --notes-file $notesPath
+          } else {
+            gh release create $tag --draft --title $tag --target $env:GITHUB_SHA --notes-file $notesPath
+          }
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "Failed to create or update draft release."
+          }
+
+      - name: Upload release assets
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $version = "${{ steps.version.outputs.version }}"
+          $tag = "v$version"
+          $releaseDir = Join-Path $env:GITHUB_WORKSPACE "target\release"
+          $portable = Join-Path $releaseDir "usb_mirror_sync-portable-v$version.zip"
+          $installer = Join-Path $releaseDir "usb_mirror_sync-setup-v$version.exe"
+
+          gh release upload $tag $portable $installer --clobber
+          if ($LASTEXITCODE -ne 0) {
+            throw "Failed to upload release assets."
+          }

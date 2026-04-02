@@ -92,6 +92,32 @@ The binary will be at:
 
 - [`target\release\usb_mirror_sync.exe`](/C:/Users/rad/Documents/github/file-sync/target/release/usb_mirror_sync.exe)
 
+## Releases
+
+GitHub Actions now builds and drafts releases from the Cargo package version in `Cargo.toml`.
+
+Flow:
+
+1. Push to `main` or run the `Draft Release` workflow manually.
+2. The workflow reads `package.version` from `Cargo.toml` and uses `v<version>` as the tag.
+3. It runs tests, builds the release binary, creates a portable zip, and compiles the Windows installer.
+4. It asks GitHub for generated release notes, then creates or updates a draft release.
+5. It uploads both release assets to that draft release.
+
+Release artifacts land in `target\release`:
+
+- `usb_mirror_sync-portable-v<version>.zip`
+- `usb_mirror_sync-setup-v<version>.exe`
+
+Required repo secrets or variables:
+
+- None. The workflow uses the built-in `GITHUB_TOKEN`.
+
+Optional future variables, if you later add code signing:
+
+- `WINDOWS_CERT_BASE64`
+- `WINDOWS_CERT_PASSWORD`
+
 ## Notes
 
 - If the USB drive was changed outside this app, the next run may do a full recopy of tracked files to re-establish a known state.
