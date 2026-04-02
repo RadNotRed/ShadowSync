@@ -10,13 +10,15 @@ theme:
   logo: assets/brand/icon.svg
   favicon: assets/brand/icon.svg
   palette:
-    - scheme: default
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
       primary: slate
       accent: teal
       toggle:
         icon: material/weather-night
         name: Switch to dark mode
-    - scheme: slate
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
       primary: black
       accent: teal
       toggle:
