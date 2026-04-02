@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, HashSet};
 use std::fs;
 use std::io::{BufReader, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
@@ -550,13 +550,13 @@ fn plan_shadow_sync(
     mirror_deletes: bool,
     force_copy_all: bool,
 ) -> Result<JobPlan> {
-    let current_paths: BTreeSet<String> = entries.iter().map(|entry| entry.relative.clone()).collect();
-
+    let current_paths: HashSet<String> = entries.iter().map(|entry| entry.relative.clone()).collect();
     let mut plan = JobPlan {
-        entries: entries.clone(),
+        entries,
         ..JobPlan::default()
     };
-    for entry in entries {
+
+    for entry in &plan.entries {
         let previous_record = previous.files.get(&entry.relative);
         let shadow_path = shadow_dir.join(slash_path_to_native(&entry.relative));
 
@@ -580,7 +580,7 @@ fn plan_shadow_sync(
         });
 
         plan.copies.push(CopyAction {
-            source: entry,
+            source: entry.clone(),
             known_hash,
         });
     }
@@ -614,7 +614,7 @@ fn plan_destination_sync(
     mirror_deletes: bool,
     desired_entries: &[SourceEntry],
 ) -> Result<LocalPlan> {
-    let desired_paths: BTreeSet<String> = desired_entries
+    let desired_paths: HashSet<String> = desired_entries
         .iter()
         .map(|entry| entry.relative.clone())
         .collect();
@@ -659,6 +659,7 @@ fn execute_shadow_plan(
     let mut copied_files = 0usize;
     let mut deleted_files = 0usize;
     let mut bytes_written = 0u64;
+    let mut created_directories = DirectoryCache::default();
 
     for action in &plan.copies {
         let relative_native = slash_path_to_native(&action.source.relative);
@@ -667,7 +668,9 @@ fn execute_shadow_plan(
         let hash = copy_with_optional_hash(
             &action.source.absolute,
             &shadow_destination,
+            action.source.modified_millis,
             action.known_hash.as_deref(),
+            &mut created_directories,
         )?;
 
         next_files.insert(
@@ -778,13 +781,19 @@ fn execute_destination_plan(
     let mut copied_files = 0usize;
     let mut deleted_files = 0usize;
     let mut bytes_written = 0u64;
+    let mut created_directories = DirectoryCache::default();
 
     for entry in &plan.copies {
         let relative_native = slash_path_to_native(&entry.relative);
         let shadow_source = shadow_dir.join(&relative_native);
         let destination = destination_root.join(&relative_native);
 
-        copy_without_hash(&shadow_source, &destination)?;
+        copy_without_hash(
+            &shadow_source,
+            &destination,
+            entry.modified_millis,
+            &mut created_directories,
+        )?;
         copied_files += 1;
         bytes_written += entry.size;
         progress_state.operations_done += 1;
@@ -882,8 +891,49 @@ fn metadata_matches_path(path: &Path, size: u64, modified_millis: i64) -> bool {
     path_millis == modified_millis
 }
 
-fn copy_with_optional_hash(source: &Path, destination: &Path, known_hash: Option<&str>) -> Result<String> {
-    ensure_parent_directory(destination)?;
+#[derive(Debug, Default)]
+struct DirectoryCache {
+    created: HashSet<PathBuf>,
+}
+
+impl DirectoryCache {
+    fn ensure_parent_directory(&mut self, path: &Path) -> Result<()> {
+        let Some(parent) = path.parent() else {
+            bail!("path has no parent: {}", path.display());
+        };
+
+        let parent = parent.to_path_buf();
+        if self.created.contains(&parent) {
+            return Ok(());
+        }
+
+        fs::create_dir_all(&parent)
+            .with_context(|| format!("failed to create {}", parent.display()))?;
+        self.created.insert(parent);
+        Ok(())
+    }
+}
+
+fn copy_with_optional_hash(
+    source: &Path,
+    destination: &Path,
+    modified_millis: i64,
+    known_hash: Option<&str>,
+    directories: &mut DirectoryCache,
+) -> Result<String> {
+    directories.ensure_parent_directory(destination)?;
+
+    if let Some(hash) = known_hash {
+        fs::copy(source, destination).with_context(|| {
+            format!(
+                "failed to copy {} to {}",
+                source.display(),
+                destination.display()
+            )
+        })?;
+        preserve_modified_time_from_millis(destination, modified_millis)?;
+        return Ok(hash.to_owned());
+    }
 
     let mut reader = BufReader::new(
         fs::File::open(source).with_context(|| format!("failed to open {}", source.display()))?,
@@ -919,15 +969,18 @@ fn copy_with_optional_hash(source: &Path, destination: &Path, known_hash: Option
     inner
         .sync_all()
         .with_context(|| format!("failed to flush {}", destination.display()))?;
-    preserve_modified_time(source, destination)?;
+    preserve_modified_time_from_millis(destination, modified_millis)?;
 
-    Ok(known_hash
-        .map(ToOwned::to_owned)
-        .unwrap_or_else(|| digest_to_hex(hasher.finalize().as_slice())))
+    Ok(digest_to_hex(hasher.finalize().as_slice()))
 }
 
-fn copy_without_hash(source: &Path, destination: &Path) -> Result<()> {
-    ensure_parent_directory(destination)?;
+fn copy_without_hash(
+    source: &Path,
+    destination: &Path,
+    modified_millis: i64,
+    directories: &mut DirectoryCache,
+) -> Result<()> {
+    directories.ensure_parent_directory(destination)?;
     fs::copy(source, destination).with_context(|| {
         format!(
             "failed to copy {} to {}",
@@ -935,7 +988,7 @@ fn copy_without_hash(source: &Path, destination: &Path) -> Result<()> {
             destination.display()
         )
     })?;
-    preserve_modified_time(source, destination)?;
+    preserve_modified_time_from_millis(destination, modified_millis)?;
     Ok(())
 }
 
@@ -987,22 +1040,10 @@ fn hash_file(path: &Path) -> Result<String> {
     Ok(digest_to_hex(hasher.finalize().as_slice()))
 }
 
-fn ensure_parent_directory(path: &Path) -> Result<()> {
-    let Some(parent) = path.parent() else {
-        bail!("path has no parent: {}", path.display());
-    };
-
-    fs::create_dir_all(parent).with_context(|| format!("failed to create {}", parent.display()))?;
-    Ok(())
-}
-
-fn preserve_modified_time(source: &Path, destination: &Path) -> Result<()> {
-    let metadata = fs::metadata(source)
-        .with_context(|| format!("failed to read metadata for {}", source.display()))?;
-    let modified = metadata
-        .modified()
-        .with_context(|| format!("failed to read modified time for {}", source.display()))?;
-    let file_time = FileTime::from_system_time(modified);
+fn preserve_modified_time_from_millis(destination: &Path, modified_millis: i64) -> Result<()> {
+    let seconds = modified_millis.div_euclid(1000);
+    let nanos = (modified_millis.rem_euclid(1000) as u32) * 1_000_000;
+    let file_time = FileTime::from_unix_time(seconds, nanos);
     set_file_mtime(destination, file_time)
         .with_context(|| format!("failed to set modified time for {}", destination.display()))?;
     Ok(())
@@ -1144,10 +1185,17 @@ mod tests {
 
         make_file(&usb_source.join("keep.txt"), "same");
         make_file(&usb_source.join("changed.txt"), "new");
-        copy_without_hash(&usb_source.join("keep.txt"), &job.shadow_dir.join("keep.txt")).unwrap();
+        let mut directories = DirectoryCache::default();
+        let keep_metadata = fs::metadata(usb_source.join("keep.txt")).unwrap();
+        copy_without_hash(
+            &usb_source.join("keep.txt"),
+            &job.shadow_dir.join("keep.txt"),
+            unix_millis(keep_metadata.modified().unwrap()).unwrap(),
+            &mut directories,
+        )
+        .unwrap();
 
         let old_hash = hash_file(&usb_source.join("keep.txt")).unwrap();
-        let keep_metadata = fs::metadata(usb_source.join("keep.txt")).unwrap();
         let previous = JobManifest {
             files: BTreeMap::from([
                 (
@@ -1185,8 +1233,15 @@ mod tests {
 
         let file_path = usb_source.join("same.txt");
         make_file(&file_path, "payload");
-        copy_without_hash(&file_path, &job.shadow_dir.join("same.txt")).unwrap();
         let metadata = fs::metadata(&file_path).unwrap();
+        let mut directories = DirectoryCache::default();
+        copy_without_hash(
+            &file_path,
+            &job.shadow_dir.join("same.txt"),
+            unix_millis(metadata.modified().unwrap()).unwrap(),
+            &mut directories,
+        )
+        .unwrap();
         let previous = JobManifest {
             files: BTreeMap::from([(
                 "same.txt".to_string(),
