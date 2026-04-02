@@ -3,7 +3,7 @@ use std::process::Command;
 use std::thread;
 use std::time::Duration;
 
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{Context, Result, anyhow};
 use rfd::{MessageButtons, MessageDialog, MessageDialogResult, MessageLevel};
 
 pub enum AlreadyRunningChoice {
@@ -140,7 +140,7 @@ fn eject_drive_windows(root: &Path) -> Result<()> {
     let mountvol_attempt = run_hidden("mountvol.exe", &[&drive_token, "/p"]);
     match mountvol_attempt {
         Ok(()) if wait_for_drive_state(root, false, Duration::from_secs(10)) => Ok(()),
-        Ok(()) => bail!(
+        Ok(()) => anyhow::bail!(
             "the drive was dismounted but still appears present; Windows may still be holding the device"
         ),
         Err(error) => Err(error.context(
@@ -160,7 +160,7 @@ fn windows_drive_token(root: &Path) -> Result<String> {
         .next()
         .ok_or_else(|| anyhow!("drive root must look like 'E:\\'"))?;
     if !letter.is_ascii_alphabetic() || colon != ':' {
-        bail!("drive root must look like 'E:\\'");
+        anyhow::bail!("drive root must look like 'E:\\'");
     }
     Ok(format!("{}:", letter.to_ascii_uppercase()))
 }
@@ -193,11 +193,6 @@ fn run_hidden(program: &str, args: &[&str]) -> Result<()> {
     } else {
         Err(anyhow!("{program} exited with status {status}"))
     }
-}
-
-#[cfg(not(target_os = "windows"))]
-fn run_hidden(program: &str, args: &[&str]) -> Result<()> {
-    run_status(program, args)
 }
 
 #[cfg(not(target_os = "windows"))]

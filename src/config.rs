@@ -381,24 +381,33 @@ fn resolve_drive_location(drive: &DriveConfig) -> Result<(String, PathBuf)> {
 }
 
 fn normalize_relative_target(value: &str) -> Result<PathBuf> {
-    let candidate = Path::new(value.trim());
+    let trimmed = value.trim();
+    ensure!(!trimmed.is_empty(), "target path must not be empty");
     ensure!(
-        !candidate.as_os_str().is_empty(),
-        "target path must not be empty"
+        !trimmed.starts_with('/') && !trimmed.starts_with('\\'),
+        "target path must be relative to the USB drive root"
     );
     ensure!(
-        !candidate.is_absolute(),
+        !looks_like_windows_absolute(trimmed),
         "target path must be relative to the USB drive root"
     );
 
+    let parts = trimmed
+        .split(['/', '\\'])
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>();
+
+    ensure!(
+        !parts.is_empty(),
+        "target path must not be empty"
+    );
+
     let mut normalized = PathBuf::new();
-    for component in candidate.components() {
-        match component {
-            Component::Normal(part) => normalized.push(part),
-            Component::CurDir => {}
-            Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
-                bail!("target path must stay inside the USB drive root")
-            }
+    for part in parts {
+        match part {
+            "." => {}
+            ".." => bail!("target path must stay inside the USB drive root"),
+            _ => normalized.push(part),
         }
     }
 
@@ -407,6 +416,11 @@ fn normalize_relative_target(value: &str) -> Result<PathBuf> {
         "target path must not collapse to an empty value"
     );
     Ok(normalized)
+}
+
+fn looks_like_windows_absolute(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':'
 }
 
 pub fn rel_path_string(path: &Path) -> Result<String> {
@@ -475,6 +489,8 @@ mod tests {
     #[test]
     fn target_path_rejects_escape_segments() {
         assert!(normalize_relative_target(r"..\escape").is_err());
+        assert!(normalize_relative_target("../escape").is_err());
+        assert!(normalize_relative_target("/absolute").is_err());
         assert!(normalize_relative_target(r"C:\absolute").is_err());
     }
 
@@ -504,6 +520,7 @@ mod tests {
     }
 }
 
+#[cfg_attr(target_os = "windows", allow(dead_code))]
 fn default_mount_path() -> &'static str {
     #[cfg(target_os = "macos")]
     {
