@@ -116,6 +116,7 @@ struct SourceEntry {
 struct JobPlan {
     entries: Vec<SourceEntry>,
     copies: Vec<CopyAction>,
+    metadata_updates: Vec<MetadataUpdateAction>,
     deletions: Vec<String>,
     next_files: BTreeMap<String, FileRecord>,
     skipped: usize,
@@ -123,7 +124,7 @@ struct JobPlan {
 
 impl JobPlan {
     fn total_operations(&self) -> usize {
-        self.copies.len() + self.deletions.len()
+        self.copies.len() + self.metadata_updates.len() + self.deletions.len()
     }
 
     fn total_copy_bytes(&self) -> u64 {
@@ -152,6 +153,14 @@ impl LocalPlan {
 struct CopyAction {
     source: SourceEntry,
     known_hash: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct MetadataUpdateAction {
+    relative: String,
+    modified_millis: i64,
+    sha256: String,
+    size: u64,
 }
 
 #[allow(dead_code)]
@@ -354,7 +363,7 @@ where
     let mut total_copy_bytes = 0u64;
     for job in &config.jobs {
         let previous_job = manifest.jobs.remove(&job.name).unwrap_or_default();
-        let shadow_plan = plan_local_to_shadow(job, &previous_job, force_copy_all)?;
+        let shadow_plan = plan_local_to_shadow(job, &previous_job, config, force_copy_all)?;
         let usb_plan = plan_usb_sync(job, &config.drive_root, &shadow_plan.entries)?;
         total_operations += shadow_plan.total_operations() + usb_plan.total_operations();
         total_copy_bytes += shadow_plan.total_copy_bytes() + usb_plan.total_copy_bytes();
@@ -525,12 +534,14 @@ fn plan_job(
         previous,
         job.mirror_deletes,
         force_copy_all,
+        config.compare.hash_on_metadata_change,
     )
 }
 
 fn plan_local_to_shadow(
     job: &ResolvedJob,
     previous: &JobManifest,
+    config: &ResolvedConfig,
     force_copy_all: bool,
 ) -> Result<JobPlan> {
     let entries = scan_path_entries(&job.local_target)?;
@@ -540,6 +551,7 @@ fn plan_local_to_shadow(
         previous,
         job.mirror_deletes,
         force_copy_all,
+        config.compare.hash_on_metadata_change,
     )
 }
 
@@ -549,6 +561,7 @@ fn plan_shadow_sync(
     previous: &JobManifest,
     mirror_deletes: bool,
     force_copy_all: bool,
+    hash_on_metadata_change: bool,
 ) -> Result<JobPlan> {
     let current_paths: HashSet<String> = entries.iter().map(|entry| entry.relative.clone()).collect();
     let mut plan = JobPlan {
@@ -569,6 +582,34 @@ fn plan_shadow_sync(
             plan.next_files.insert(entry.relative.clone(), record.clone());
             plan.skipped += 1;
             continue;
+        }
+
+        if !force_copy_all
+            && hash_on_metadata_change
+            && let Some(record) = previous_record
+            && record.size == entry.size
+            && record.modified_millis != entry.modified_millis
+            && shadow_cache_reusable(&shadow_path, record.size)
+        {
+            let source_hash = hash_file_contents(&entry.absolute)?;
+            if source_hash == record.sha256 {
+                plan.metadata_updates.push(MetadataUpdateAction {
+                    relative: entry.relative.clone(),
+                    modified_millis: entry.modified_millis,
+                    sha256: record.sha256.clone(),
+                    size: entry.size,
+                });
+                plan.next_files.insert(
+                    entry.relative.clone(),
+                    FileRecord {
+                        size: entry.size,
+                        modified_millis: entry.modified_millis,
+                        sha256: record.sha256.clone(),
+                    },
+                );
+                plan.skipped += 1;
+                continue;
+            }
         }
 
         let known_hash = previous_record.and_then(|record| {
@@ -695,6 +736,32 @@ fn execute_shadow_plan(
             bytes_total: progress_state.bytes_total,
             current_path: Some(action.source.relative.clone()),
             phase: SyncPhase::Copying,
+        });
+    }
+
+    for action in &plan.metadata_updates {
+        let relative_native = slash_path_to_native(&action.relative);
+        let shadow_destination = job.shadow_dir.join(&relative_native);
+        preserve_modified_time_from_millis(&shadow_destination, action.modified_millis)?;
+        next_files.insert(
+            action.relative.clone(),
+            FileRecord {
+                size: action.size,
+                modified_millis: action.modified_millis,
+                sha256: action.sha256.clone(),
+            },
+        );
+        progress_state.operations_done += 1;
+        progress(SyncProgress {
+            current_job: job.name.clone(),
+            job_index: job_index + 1,
+            job_count: config.jobs.len(),
+            operations_done: progress_state.operations_done,
+            operations_total: progress_state.operations_total,
+            bytes_done: progress_state.bytes_done,
+            bytes_total: progress_state.bytes_total,
+            current_path: Some(action.relative.clone()),
+            phase: SyncPhase::Finalizing,
         });
     }
 
@@ -891,6 +958,13 @@ fn metadata_matches_path(path: &Path, size: u64, modified_millis: i64) -> bool {
     path_millis == modified_millis
 }
 
+fn shadow_cache_reusable(path: &Path, size: u64) -> bool {
+    let Ok(metadata) = fs::metadata(path) else {
+        return false;
+    };
+    metadata.is_file() && metadata.len() == size
+}
+
 #[derive(Debug, Default)]
 struct DirectoryCache {
     created: HashSet<PathBuf>,
@@ -1024,6 +1098,10 @@ fn prune_empty_ancestors(mut candidate: Option<&Path>, stop_root: &Path) -> Resu
 
 #[cfg(test)]
 fn hash_file(path: &Path) -> Result<String> {
+    hash_file_contents(path)
+}
+
+fn hash_file_contents(path: &Path) -> Result<String> {
     let mut file =
         BufReader::new(fs::File::open(path).with_context(|| format!("failed to open {}", path.display()))?);
     let mut hasher = Sha256::new();
@@ -1166,6 +1244,7 @@ mod tests {
                 shadow_copy: true,
                 clear_shadow_on_eject: true,
             },
+            compare: crate::config::CompareConfig::default(),
             jobs: vec![ResolvedJob {
                 name: "docs".to_string(),
                 usb_source_relative: PathBuf::from("Docs"),
@@ -1283,6 +1362,54 @@ mod tests {
         assert_eq!(plan.skipped, 0);
         assert_eq!(plan.copies.len(), 1);
         assert_eq!(plan.copies[0].source.relative, "cached.txt");
+    }
+
+    #[test]
+    fn plan_reuses_shadow_when_only_metadata_changed_but_hash_matches() {
+        let temp = TempDir::new().unwrap();
+        let config = sample_config(temp.path());
+        let job = &config.jobs[0];
+        let usb_source = job.usb_source_root(&config.drive_root);
+
+        let file_path = usb_source.join("same-content.txt");
+        make_file(&file_path, "payload");
+        let metadata = fs::metadata(&file_path).unwrap();
+        let old_millis = unix_millis(metadata.modified().unwrap()).unwrap();
+        let sha256 = hash_file(&file_path).unwrap();
+
+        let mut directories = DirectoryCache::default();
+        copy_without_hash(
+            &file_path,
+            &job.shadow_dir.join("same-content.txt"),
+            old_millis,
+            &mut directories,
+        )
+        .unwrap();
+
+        let new_millis = old_millis + 5_000;
+        let previous = JobManifest {
+            files: BTreeMap::from([(
+                "same-content.txt".to_string(),
+                FileRecord {
+                    size: metadata.len(),
+                    modified_millis: old_millis,
+                    sha256: sha256.clone(),
+                },
+            )]),
+        };
+
+        let entries = vec![SourceEntry {
+            relative: "same-content.txt".to_string(),
+            absolute: file_path,
+            size: metadata.len(),
+            modified_millis: new_millis,
+        }];
+        let plan = plan_shadow_sync(entries, &job.shadow_dir, &previous, true, false, true).unwrap();
+
+        assert_eq!(plan.copies.len(), 0);
+        assert_eq!(plan.metadata_updates.len(), 1);
+        assert_eq!(plan.metadata_updates[0].sha256, sha256);
+        assert_eq!(plan.next_files["same-content.txt"].modified_millis, new_millis);
     }
 
     #[test]

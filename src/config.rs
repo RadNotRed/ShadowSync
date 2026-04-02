@@ -199,6 +199,7 @@ pub struct ResolvedConfig {
     pub eject_after_sync: bool,
     pub app: AppBehavior,
     pub cache: ResolvedCacheConfig,
+    pub compare: CompareConfig,
     pub jobs: Vec<ResolvedJob>,
 }
 
@@ -320,6 +321,7 @@ fn validate_config(config: AppConfig, paths: &AppPaths) -> Result<ResolvedConfig
         eject_after_sync: config.drive.eject_after_sync,
         app,
         cache,
+        compare: config.compare,
         jobs,
     })
 }
