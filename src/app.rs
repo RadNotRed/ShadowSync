@@ -121,6 +121,7 @@ struct App {
     config: Option<ResolvedConfig>,
     config_error: Option<String>,
     config_stamp: Option<std::time::SystemTime>,
+    auto_opened_error_key: Option<String>,
     drive_present: bool,
     has_auto_synced_this_mount: bool,
     syncing: bool,
@@ -148,6 +149,7 @@ impl App {
             config: None,
             config_error: None,
             config_stamp: None,
+            auto_opened_error_key: None,
             drive_present: false,
             has_auto_synced_this_mount: false,
             syncing: false,
@@ -184,6 +186,7 @@ impl App {
                 append_log(&self.paths, format!("Loaded config: {config}"));
                 self.config = Some(config);
                 self.config_error = None;
+                self.auto_opened_error_key = None;
                 if !self.syncing {
                     self.last_status = "Config loaded".to_string();
                 }
@@ -197,6 +200,33 @@ impl App {
                 self.last_status = format!("Config error: {message}");
                 self.watcher = None;
                 self.watcher_key = None;
+                self.maybe_open_wizard_for_config_error(current_stamp, &message);
+            }
+        }
+    }
+
+    fn maybe_open_wizard_for_config_error(
+        &mut self,
+        current_stamp: Option<std::time::SystemTime>,
+        message: &str,
+    ) {
+        let error_key = format!("{current_stamp:?}|{message}");
+        if self.auto_opened_error_key.as_deref() == Some(error_key.as_str()) {
+            return;
+        }
+
+        match wizard::prepare_recovery_context(&self.paths, message)
+            .and_then(|context| wizard::open_setup_wizard_with_context(&self.paths, &context))
+        {
+            Ok(()) => {
+                self.auto_opened_error_key = Some(error_key);
+                self.config_stamp = None;
+                self.last_status = "Config issue detected. Setup Wizard opened.".to_string();
+            }
+            Err(error) => {
+                let launch_message = format!("Setup wizard auto-open failed: {error}");
+                append_log(&self.paths, &launch_message);
+                self.last_status = launch_message;
             }
         }
     }

@@ -15,7 +15,8 @@ What this MVP does:
 - Keeps an optional local shadow cache that mirrors the USB source
 - Ejects the drive after a successful sync
 - Clears the local shadow cache after eject if configured
-- Includes a Windows setup wizard so users can build/edit config without hand-writing JSON
+- Includes a richer Windows setup wizard with grouped tabs, tooltips, and recovery actions
+- Auto-opens the setup wizard when the config becomes invalid and can back up broken JSON before restoring a safe default
 
 What it assumes:
 
