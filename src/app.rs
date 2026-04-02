@@ -18,7 +18,7 @@ use crate::sync_engine::{
 };
 use crate::watcher::{ChangeWatcher, WatchKind};
 use crate::wizard;
-use crate::windows_util;
+use crate::platform;
 
 pub fn run() -> Result<()> {
     let paths = AppPaths::discover()?;
@@ -26,7 +26,7 @@ pub fn run() -> Result<()> {
 
     let event_loop = EventLoop::<UserEvent>::with_user_event()
         .build()
-        .context("failed to create the Windows event loop")?;
+        .context("failed to create the application event loop")?;
     let proxy = event_loop.create_proxy();
 
     let menu_proxy = proxy.clone();
@@ -243,7 +243,7 @@ impl App {
         };
 
         let was_present = self.drive_present;
-        let is_present = windows_util::drive_present(config.drive_letter);
+        let is_present = platform::drive_present(&config.drive_root);
         self.drive_present = is_present;
 
         if is_present && !was_present {
@@ -251,7 +251,7 @@ impl App {
             self.pending_pull_sync = false;
             self.pending_push_sync = false;
             if !self.syncing {
-                self.last_status = format!("Drive {}: detected", config.drive_letter);
+                self.last_status = format!("Drive {} detected", config.drive_label);
             }
         }
 
@@ -267,7 +267,7 @@ impl App {
             self.watcher = None;
             self.watcher_key = None;
             if !self.syncing {
-                self.last_status = format!("Drive {}: removed", config.drive_letter);
+                self.last_status = format!("Drive {} removed", config.drive_label);
             }
         }
     }
@@ -298,8 +298,8 @@ impl App {
             return false;
         };
 
-        if !windows_util::drive_present(config.drive_letter) {
-            self.last_status = format!("Drive {}: is not mounted", config.drive_letter);
+        if !platform::drive_present(&config.drive_root) {
+            self.last_status = format!("Drive {} is not mounted", config.drive_label);
             self.update_ui();
             return false;
         }
@@ -461,7 +461,7 @@ impl App {
     ) -> String {
         let mut key = format!(
             "{}|{}|{}",
-            config.drive_letter,
+            config.drive_label,
             if watch_usb { 1 } else { 0 },
             if watch_local { 1 } else { 0 }
         );
@@ -505,9 +505,9 @@ impl App {
             return;
         };
 
-        match windows_util::eject_drive(config.drive_letter) {
+        match platform::eject_drive(&config.drive_root) {
             Ok(()) => {
-                self.last_status = format!("Drive {}: ejected", config.drive_letter);
+                self.last_status = format!("Drive {} ejected", config.drive_label);
                 if config.cache.shadow_copy && config.cache.clear_shadow_on_eject {
                     if let Err(error) = clear_shadow_cache(config) {
                         append_log(&self.paths, format!("Cache cleanup error: {error}"));
@@ -525,7 +525,7 @@ impl App {
     }
 
     fn open_config(&mut self) {
-        if let Err(error) = windows_util::open_text_file(&self.paths.config_file) {
+        if let Err(error) = platform::open_path(&self.paths.config_file) {
             self.last_status = format!("Open config failed: {error}");
             append_log(&self.paths, &self.last_status);
             self.update_ui();
@@ -533,7 +533,7 @@ impl App {
     }
 
     fn open_log(&mut self) {
-        if let Err(error) = windows_util::open_text_file(&self.paths.log_file) {
+        if let Err(error) = platform::open_path(&self.paths.log_file) {
             self.last_status = format!("Open log failed: {error}");
             append_log(&self.paths, &self.last_status);
             self.update_ui();
@@ -549,7 +549,7 @@ impl App {
     }
 
     fn open_app_folder(&mut self) {
-        if let Err(error) = windows_util::open_in_explorer(&self.paths.app_dir) {
+        if let Err(error) = platform::open_in_file_manager(&self.paths.app_dir) {
             self.last_status = format!("Open app folder failed: {error}");
             append_log(&self.paths, &self.last_status);
             self.update_ui();
@@ -668,7 +668,7 @@ impl App {
                 .map(|config| {
                     format!(
                         "Drive {}: {}",
-                        config.drive_letter,
+                        config.drive_label,
                         if self.drive_present { "ready" } else { "missing" }
                     )
                 })

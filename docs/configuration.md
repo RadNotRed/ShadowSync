@@ -18,7 +18,8 @@ The runtime config lives at `%LOCALAPPDATA%\UsbMirrorSync\config.json`.
 
 | Field | Type | Default | Notes |
 | --- | --- | --- | --- |
-| `letter` | string | none | Single drive letter for the removable device, such as `E` or `S` |
+| `letter` | string or null | none | Windows-only drive letter such as `E` or `S` |
+| `path` | string or null | none | Absolute mounted USB path, used on macOS and Linux |
 | `eject_after_sync` | bool | `true` | Ejects the drive after a successful sync run |
 
 ## `app`
@@ -59,7 +60,8 @@ Each job maps one USB-relative source path to one absolute PC target path.
 
 - `source` must stay inside the configured USB drive.
 - `target` must be an absolute local path.
-- `source` should not include the drive letter.
+- On Windows, set `drive.letter`.
+- On macOS and Linux, set `drive.path`.
 - Duplicate job names are rejected.
 
 ## Good Example

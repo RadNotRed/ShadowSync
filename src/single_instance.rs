@@ -1,86 +1,72 @@
-use std::env;
+use std::fs::{self, File, OpenOptions};
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
-use windows_sys::Win32::Foundation::{CloseHandle, GetLastError, HANDLE};
-use windows_sys::Win32::System::Threading::{CreateMutexW, ReleaseMutex};
+use fs2::FileExt;
 
-use crate::windows_util;
+use crate::config::AppPaths;
+use crate::platform;
 
-const INSTANCE_MUTEX_NAME: &str = "Local\\UsbMirrorSync.SingleInstance";
+const INSTANCE_LOCK_FILE: &str = "instance.lock";
 
 pub fn ensure_single_instance() -> Result<Option<SingleInstanceGuard>> {
-    if let Some(guard) = SingleInstanceGuard::try_acquire()? {
+    let paths = AppPaths::discover()?;
+    fs::create_dir_all(&paths.app_dir)
+        .with_context(|| format!("failed to create {}", paths.app_dir.display()))?;
+
+    if let Some(guard) = SingleInstanceGuard::try_acquire(&paths)? {
         return Ok(Some(guard));
     }
 
-    match windows_util::show_already_running_prompt() {
-        windows_util::AlreadyRunningChoice::Restart => {
-            restart_running_copy()?;
-            windows_util::sleep_short(Duration::from_millis(300));
-            SingleInstanceGuard::wait_and_acquire(Duration::from_secs(6))
-                .map(Some)
-                .with_context(|| {
-                    "the existing copy was asked to restart, but the single-instance lock did not clear"
-                })
-        }
-        windows_util::AlreadyRunningChoice::Cancel => Ok(None),
-    }
-}
-
-struct OwnedHandle(HANDLE);
-
-impl Drop for OwnedHandle {
-    fn drop(&mut self) {
-        unsafe {
-            ReleaseMutex(self.0);
-            CloseHandle(self.0);
-        }
+    match platform::show_already_running_prompt() {
+        platform::AlreadyRunningChoice::Retry => SingleInstanceGuard::wait_and_acquire(&paths, Duration::from_secs(8))
+            .map(Some)
+            .with_context(|| "another instance is still active"),
+        platform::AlreadyRunningChoice::Cancel => Ok(None),
     }
 }
 
 pub struct SingleInstanceGuard {
-    _handle: OwnedHandle,
+    file: File,
+}
+
+impl Drop for SingleInstanceGuard {
+    fn drop(&mut self) {
+        let _ = self.file.unlock();
+    }
 }
 
 impl SingleInstanceGuard {
-    fn try_acquire() -> Result<Option<Self>> {
-        let name = windows_util::to_wide_null(INSTANCE_MUTEX_NAME);
-        let handle = unsafe { CreateMutexW(std::ptr::null(), 1, name.as_ptr()) };
-        if handle.is_null() {
-            bail!("failed to create the single-instance mutex");
-        }
+    fn try_acquire(paths: &AppPaths) -> Result<Option<Self>> {
+        let lock_path = paths.app_dir.join(INSTANCE_LOCK_FILE);
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(&lock_path)
+            .with_context(|| format!("failed to open {}", lock_path.display()))?;
 
-        let last_error = unsafe { GetLastError() };
-        if last_error == windows_sys::Win32::Foundation::ERROR_ALREADY_EXISTS {
-            unsafe {
-                CloseHandle(handle);
-            }
-            Ok(None)
-        } else {
-            Ok(Some(Self {
-                _handle: OwnedHandle(handle),
-            }))
+        match file.try_lock_exclusive() {
+            Ok(()) => Ok(Some(Self { file })),
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => Ok(None),
+            Err(error) => Err(error).with_context(|| {
+                format!("failed to lock {}", lock_path.display())
+            }),
         }
     }
 
-    fn wait_and_acquire(timeout: Duration) -> Result<Self> {
+    fn wait_and_acquire(paths: &AppPaths, timeout: Duration) -> Result<Self> {
         let start = std::time::Instant::now();
         loop {
-            if let Some(guard) = Self::try_acquire()? {
+            if let Some(guard) = Self::try_acquire(paths)? {
                 return Ok(guard);
             }
             if start.elapsed() >= timeout {
                 break;
             }
-            windows_util::sleep_short(Duration::from_millis(250));
+            platform::sleep_short(Duration::from_millis(250));
         }
         bail!("another instance is still active")
     }
-}
-
-fn restart_running_copy() -> Result<()> {
-    let current_exe = env::current_exe().context("failed to resolve the current executable path")?;
-    let current_pid = std::process::id();
-    windows_util::terminate_matching_processes(&current_exe, current_pid)
 }

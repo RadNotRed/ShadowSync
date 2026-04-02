@@ -74,9 +74,33 @@ pub struct AppConfig {
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct DriveConfig {
-    pub letter: String,
+    #[serde(default)]
+    pub letter: Option<String>,
+    #[serde(default)]
+    pub path: Option<String>,
     #[serde(default = "default_true")]
     pub eject_after_sync: bool,
+}
+
+impl Default for DriveConfig {
+    fn default() -> Self {
+        #[cfg(target_os = "windows")]
+        {
+            Self {
+                letter: Some("E".to_string()),
+                path: None,
+                eject_after_sync: true,
+            }
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            Self {
+                letter: None,
+                path: Some(default_mount_path().to_string()),
+                eject_after_sync: true,
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -145,9 +169,32 @@ pub struct JobConfig {
     pub mirror_deletes: bool,
 }
 
+impl Default for JobConfig {
+    fn default() -> Self {
+        Self {
+            name: "Documents".to_string(),
+            source: default_job_source().to_string(),
+            target: default_job_target().to_string(),
+            mirror_deletes: true,
+        }
+    }
+}
+
+impl Default for AppConfig {
+    fn default() -> Self {
+        Self {
+            drive: DriveConfig::default(),
+            app: AppBehavior::default(),
+            cache: CacheConfig::default(),
+            compare: CompareConfig::default(),
+            jobs: vec![JobConfig::default()],
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct ResolvedConfig {
-    pub drive_letter: char,
+    pub drive_label: String,
     pub drive_root: PathBuf,
     pub eject_after_sync: bool,
     pub app: AppBehavior,
@@ -211,8 +258,7 @@ fn validate_config(config: AppConfig, paths: &AppPaths) -> Result<ResolvedConfig
         "config.json must contain at least one sync job"
     );
 
-    let drive_letter = normalize_drive_letter(&config.drive.letter)?;
-    let drive_root = PathBuf::from(format!("{drive_letter}:\\"));
+    let (drive_label, drive_root) = resolve_drive_location(&config.drive)?;
 
     let poll_interval_seconds = config.app.poll_interval_seconds.clamp(1, 60);
     let app = AppBehavior {
@@ -269,7 +315,7 @@ fn validate_config(config: AppConfig, paths: &AppPaths) -> Result<ResolvedConfig
     }
 
     Ok(ResolvedConfig {
-        drive_letter,
+        drive_label,
         drive_root,
         eject_after_sync: config.drive.eject_after_sync,
         app,
@@ -306,6 +352,32 @@ fn normalize_drive_letter(value: &str) -> Result<char> {
         "drive.letter must be an ASCII letter"
     );
     Ok(letter.to_ascii_uppercase())
+}
+
+fn resolve_drive_location(drive: &DriveConfig) -> Result<(String, PathBuf)> {
+    if let Some(path) = drive.path.as_deref().map(str::trim).filter(|value| !value.is_empty()) {
+        let root = PathBuf::from(path);
+        ensure!(root.is_absolute(), "drive.path must be an absolute mount path");
+        return Ok((root.display().to_string(), root));
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let letter = drive
+            .letter
+            .as_deref()
+            .ok_or_else(|| anyhow!("drive.letter must be set on Windows"))?;
+        let drive_letter = normalize_drive_letter(letter)?;
+        return Ok((
+            format!("{drive_letter}:"),
+            PathBuf::from(format!("{drive_letter}:\\")),
+        ));
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        bail!("drive.path must be set to the mounted USB path on this operating system");
+    }
 }
 
 fn normalize_relative_target(value: &str) -> Result<PathBuf> {
@@ -381,43 +453,16 @@ fn default_poll_seconds() -> u64 {
     2
 }
 
-pub fn default_config_template() -> &'static str {
-    r#"{
-  "drive": {
-    "letter": "E",
-    "eject_after_sync": true
-  },
-  "app": {
-    "sync_on_insert": true,
-    "sync_while_mounted": true,
-    "auto_sync_to_usb": false,
-    "poll_interval_seconds": 2
-  },
-  "cache": {
-    "shadow_copy": true,
-    "clear_shadow_on_eject": false
-  },
-  "compare": {
-    "hash_on_metadata_change": true
-  },
-  "jobs": [
-    {
-      "name": "Documents",
-      "source": "Backups\\Documents",
-      "target": "C:\\Users\\YOUR_NAME\\Documents\\Important",
-      "mirror_deletes": true
-    }
-  ]
-}
-"#
+pub fn default_config_template() -> String {
+    serde_json::to_string_pretty(&AppConfig::default()).unwrap_or_else(|_| "{}".to_string())
 }
 
 impl fmt::Display for ResolvedConfig {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             formatter,
-            "drive {}: with {} job(s)",
-            self.drive_letter,
+            "drive {} with {} job(s)",
+            self.drive_label,
             self.jobs.len()
         )
     }
@@ -444,5 +489,58 @@ mod tests {
         assert_eq!(normalize_drive_letter("e").unwrap(), 'E');
         assert_eq!(normalize_drive_letter("e:").unwrap(), 'E');
         assert_eq!(normalize_drive_letter("e:\\").unwrap(), 'E');
+    }
+
+    #[test]
+    fn resolve_drive_location_accepts_mount_path() {
+        let drive = DriveConfig {
+            letter: None,
+            path: Some(default_mount_path().to_string()),
+            eject_after_sync: false,
+        };
+        let (label, root) = resolve_drive_location(&drive).unwrap();
+        assert_eq!(label, default_mount_path());
+        assert_eq!(root, PathBuf::from(default_mount_path()));
+    }
+}
+
+fn default_mount_path() -> &'static str {
+    #[cfg(target_os = "macos")]
+    {
+        "/Volumes/USB"
+    }
+    #[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
+    {
+        "/media/YOUR_NAME/USB"
+    }
+    #[cfg(target_os = "windows")]
+    {
+        r"C:\"
+    }
+}
+
+fn default_job_source() -> &'static str {
+    #[cfg(target_os = "windows")]
+    {
+        "Backups\\Documents"
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        "Backups/Documents"
+    }
+}
+
+fn default_job_target() -> &'static str {
+    #[cfg(target_os = "windows")]
+    {
+        r"C:\Users\YOUR_NAME\Documents\Important"
+    }
+    #[cfg(target_os = "macos")]
+    {
+        "/Users/YOUR_NAME/Documents/Important"
+    }
+    #[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
+    {
+        "/home/YOUR_NAME/Documents/Important"
     }
 }

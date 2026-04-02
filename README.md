@@ -1,16 +1,16 @@
 # USB Mirror Sync
 
-USB Mirror Sync is a Windows tray app for keeping selected folders from a removable USB drive mirrored onto a PC, with an optional shadow cache and manual or automatic push back to the drive.
+USB Mirror Sync is a cross-platform tray app for keeping selected folders from a removable USB drive mirrored onto a PC, with an optional shadow cache and manual or automatic push back to the drive.
 
 ## What It Does
 
-- Detects a configured USB drive letter such as `E:` or `S:`
+- Detects a configured Windows drive letter such as `E:` or a mounted drive path on macOS/Linux
 - Pulls from `USB -> shadow cache -> local target`
 - Optionally pushes from `local target -> shadow cache -> USB`
 - Skips unchanged files using a persistent manifest cache
 - Watches mounted folders for live changes instead of doing timed full rescans
 - Shows tray-based progress, setup, logs, and manual sync actions
-- Supports both portable and installer-based releases
+- Supports Windows, macOS, and Linux release artifacts
 
 ## Documentation
 
@@ -25,8 +25,10 @@ Release artifacts are produced automatically from the version in `Cargo.toml`:
 
 - `usb_mirror_sync-portable-v<version>.zip`
 - `usb_mirror_sync-setup-v<version>.exe`
+- `usb_mirror_sync-macos-<arch>-v<version>.tar.gz`
+- `usb_mirror_sync-linux-<arch>-v<version>.tar.gz`
 
-The installer supports optional desktop shortcut creation and optional run-at-startup registration. Startup is off by default.
+Windows keeps the installer with optional desktop shortcut creation and optional run-at-startup registration. Startup is off by default.
 
 ## Runtime Files
 
@@ -38,6 +40,8 @@ On first launch the app creates:
 - `%LOCALAPPDATA%\UsbMirrorSync\sync.log`
 
 Use the tray menu `Setup Wizard` action for guided configuration, or edit `config.json` directly.
+
+On Windows, set `drive.letter`. On macOS and Linux, set `drive.path` to the mounted USB root.
 
 ## Development
 

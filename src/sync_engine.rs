@@ -13,7 +13,7 @@ use walkdir::WalkDir;
 use crate::config::{
     AppPaths, ResolvedConfig, ResolvedJob, append_log, rel_path_string, slash_path_to_native,
 };
-use crate::windows_util;
+use crate::platform;
 
 const MANIFEST_VERSION: u32 = 1;
 const DRIVE_MARKER_DIRECTORY: &str = ".usb-mirror-sync";
@@ -77,7 +77,7 @@ struct Manifest {
     #[serde(default = "manifest_version")]
     version: u32,
     #[serde(default)]
-    drive_letter: Option<char>,
+    drive_label: Option<String>,
     #[serde(default)]
     last_sync_token: Option<String>,
     #[serde(default)]
@@ -172,8 +172,8 @@ pub fn run_sync_with_progress<F>(
 where
     F: FnMut(SyncProgress),
 {
-    if !windows_util::drive_present(config.drive_letter) {
-        bail!("drive {}: is not mounted", config.drive_letter);
+    if !platform::drive_present(&config.drive_root) {
+        bail!("drive {} is not mounted", config.drive_label);
     }
 
     fs::create_dir_all(&config.cache.shadow_root).with_context(|| {
@@ -230,7 +230,7 @@ where
 
     let mut next_manifest = Manifest {
         version: MANIFEST_VERSION,
-        drive_letter: Some(config.drive_letter),
+        drive_label: Some(config.drive_label.clone()),
         last_sync_token: None,
         jobs: BTreeMap::new(),
     };
@@ -298,8 +298,8 @@ where
 
     let mut drive_ejected = false;
     if config.eject_after_sync {
-        windows_util::eject_drive(config.drive_letter).with_context(|| {
-            format!("failed to eject drive {}:", config.drive_letter)
+        platform::eject_drive(&config.drive_root).with_context(|| {
+            format!("failed to eject drive {}", config.drive_label)
         })?;
         drive_ejected = true;
         if config.cache.shadow_copy && config.cache.clear_shadow_on_eject {
@@ -329,8 +329,8 @@ pub fn run_sync_to_usb_with_progress<F>(
 where
     F: FnMut(SyncProgress),
 {
-    if !windows_util::drive_present(config.drive_letter) {
-        bail!("drive {}: is not mounted", config.drive_letter);
+    if !platform::drive_present(&config.drive_root) {
+        bail!("drive {} is not mounted", config.drive_label);
     }
 
     fs::create_dir_all(&config.cache.shadow_root).with_context(|| {
@@ -387,7 +387,7 @@ where
 
     let mut next_manifest = Manifest {
         version: MANIFEST_VERSION,
-        drive_letter: Some(config.drive_letter),
+        drive_label: Some(config.drive_label.clone()),
         last_sync_token: None,
         jobs: BTreeMap::new(),
     };
@@ -455,8 +455,8 @@ where
 
     let mut drive_ejected = false;
     if config.eject_after_sync {
-        windows_util::eject_drive(config.drive_letter).with_context(|| {
-            format!("failed to eject drive {}:", config.drive_letter)
+        platform::eject_drive(&config.drive_root).with_context(|| {
+            format!("failed to eject drive {}", config.drive_label)
         })?;
         drive_ejected = true;
         if config.cache.shadow_copy && config.cache.clear_shadow_on_eject {
@@ -1095,16 +1095,8 @@ mod tests {
     use super::*;
     use tempfile::TempDir;
 
-    fn mounted_drive_letter(path: &Path) -> char {
-        match path.components().next() {
-            Some(std::path::Component::Prefix(prefix)) => match prefix.kind() {
-                std::path::Prefix::Disk(letter)
-                | std::path::Prefix::VerbatimDisk(letter) => char::from(letter),
-                _ => 'C',
-            },
-            _ => 'C',
-        }
-        .to_ascii_uppercase()
+    fn mounted_drive_label(path: &Path) -> String {
+        path.display().to_string()
     }
 
     fn make_file(path: &Path, contents: &str) {
@@ -1124,7 +1116,7 @@ mod tests {
         fs::create_dir_all(&cache).unwrap();
 
         ResolvedConfig {
-            drive_letter: mounted_drive_letter(root),
+            drive_label: mounted_drive_label(&usb_root),
             drive_root: usb_root,
             eject_after_sync: false,
             app: crate::config::AppBehavior::default(),

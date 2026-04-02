@@ -1,6 +1,7 @@
 {
   "drive": {
     "letter": "E",
+    "path": null,
     "eject_after_sync": true
   },
   "app": {

@@ -14,14 +14,47 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  draft-release:
-    runs-on: windows-latest
-
+  metadata:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+      mode: ${{ steps.tag_state.outputs.mode }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      - name: Read package version
+        id: version
+        shell: bash
+        run: |
+          version="$(python -c "import pathlib,re; text=pathlib.Path('Cargo.toml').read_text(); print(re.search(r'(?s)\[package\].*?version\s*=\s*\"([^\"]+)\"', text).group(1))")"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=v$version" >> "$GITHUB_OUTPUT"
+
+      - name: Check release tag state
+        id: tag_state
+        shell: bash
+        run: |
+          tag="${{ steps.version.outputs.tag }}"
+          if ! tag_sha="$(git rev-list -n 1 "$tag" 2>/dev/null)"; then
+            echo "mode=new" >> "$GITHUB_OUTPUT"
+          elif [ "$tag_sha" = "$GITHUB_SHA" ]; then
+            echo "mode=rerun" >> "$GITHUB_OUTPUT"
+          else
+            echo "mode=skip" >> "$GITHUB_OUTPUT"
+            echo "Version tag $tag already exists on commit $tag_sha. Skipping release for unchanged Cargo version."
+          fi
+
+  build-windows:
+    needs: metadata
+    if: needs.metadata.outputs.mode != 'skip'
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -30,98 +63,137 @@ jobs:
         shell: pwsh
         run: choco install innosetup --no-progress --yes
 
-      - name: Read package version
-        id: version
-        shell: pwsh
-        run: |
-          $manifest = Get-Content -LiteralPath Cargo.toml -Raw
-          if ($manifest -match '(?s)\[package\].*?version\s*=\s*"([^"]+)"') {
-            $version = $matches[1]
-          } else {
-            throw "Unable to read package version from Cargo.toml"
-          }
-
-          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
-          "tag=v$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
-
-      - name: Check release tag state
-        id: tag_state
-        shell: pwsh
-        run: |
-          $tag = "${{ steps.version.outputs.tag }}"
-          $tagSha = & git rev-list -n 1 $tag 2>$null
-          $tagLookupExit = $LASTEXITCODE
-          $global:LASTEXITCODE = 0
-
-          if ($tagLookupExit -ne 0 -or -not $tagSha) {
-            "mode=new" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
-          } elseif ($tagSha -eq $env:GITHUB_SHA) {
-            "mode=rerun" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
-          } else {
-            "mode=skip" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
-            Write-Host "Version tag $tag already exists on commit $tagSha. Skipping release for unchanged Cargo version."
-          }
-
       - name: Test
-        if: steps.tag_state.outputs.mode != 'skip'
         shell: pwsh
         run: cargo test --locked
 
       - name: Build packages
-        if: steps.tag_state.outputs.mode != 'skip'
         shell: pwsh
         run: .\.github\scripts\package-release.ps1 -RepoRoot $pwd.Path
 
+      - name: Upload workflow artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-release
+          path: |
+            target/release/usb_mirror_sync-portable-v${{ needs.metadata.outputs.version }}.zip
+            target/release/usb_mirror_sync-setup-v${{ needs.metadata.outputs.version }}.exe
+
+  build-macos:
+    needs: metadata
+    if: needs.metadata.outputs.mode != 'skip'
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Test
+        run: cargo test --locked
+
+      - name: Build release binary
+        run: cargo build --release --locked
+
+      - name: Package macOS artifact
+        shell: bash
+        run: |
+          version="${{ needs.metadata.outputs.version }}"
+          arch="$(uname -m)"
+          stage="target/release/package-macos"
+          artifact="target/release/usb_mirror_sync-macos-${arch}-v${version}.tar.gz"
+          rm -rf "$stage"
+          mkdir -p "$stage"
+          cp target/release/usb_mirror_sync "$stage/"
+          cp README.md "$stage/"
+          cp config.example.json "$stage/"
+          tar -czf "$artifact" -C "$stage" .
+
+      - name: Upload workflow artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-release
+          path: target/release/usb_mirror_sync-macos-*-v${{ needs.metadata.outputs.version }}.tar.gz
+
+  build-linux:
+    needs: metadata
+    if: needs.metadata.outputs.mode != 'skip'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Linux UI dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libayatana-appindicator3-dev
+
+      - name: Test
+        run: cargo test --locked
+
+      - name: Build release binary
+        run: cargo build --release --locked
+
+      - name: Package Linux artifact
+        shell: bash
+        run: |
+          version="${{ needs.metadata.outputs.version }}"
+          arch="$(uname -m)"
+          stage="target/release/package-linux"
+          artifact="target/release/usb_mirror_sync-linux-${arch}-v${version}.tar.gz"
+          rm -rf "$stage"
+          mkdir -p "$stage"
+          cp target/release/usb_mirror_sync "$stage/"
+          cp README.md "$stage/"
+          cp config.example.json "$stage/"
+          tar -czf "$artifact" -C "$stage" .
+
+      - name: Upload workflow artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-release
+          path: target/release/usb_mirror_sync-linux-*-v${{ needs.metadata.outputs.version }}.tar.gz
+
+  release:
+    needs:
+      - metadata
+      - build-windows
+      - build-macos
+      - build-linux
+    if: needs.metadata.outputs.mode != 'skip'
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-artifacts
+
       - name: Generate release notes
         id: notes
-        if: steps.tag_state.outputs.mode != 'skip'
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
+        shell: bash
         run: |
-          $tag = "v${{ steps.version.outputs.version }}"
-          $notesJson = gh api "repos/$env:GITHUB_REPOSITORY/releases/generate-notes" -X POST -f tag_name="$tag" -f target_commitish="$env:GITHUB_SHA"
-          $notes = ($notesJson | ConvertFrom-Json).body
-          $notesPath = Join-Path $env:RUNNER_TEMP "release-notes.md"
-          Set-Content -LiteralPath $notesPath -Value $notes -NoNewline
-          "path=$notesPath" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          tag="v${{ needs.metadata.outputs.version }}"
+          gh api "repos/$GITHUB_REPOSITORY/releases/generate-notes" -X POST -f tag_name="$tag" -f target_commitish="$GITHUB_SHA" --jq .body > release-notes.md
+          echo "path=$PWD/release-notes.md" >> "$GITHUB_OUTPUT"
 
       - name: Create or update draft release
-        if: steps.tag_state.outputs.mode != 'skip'
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
+        shell: bash
         run: |
-          $tag = "v${{ steps.version.outputs.version }}"
-          $notesPath = "${{ steps.notes.outputs.path }}"
-
-          & gh release view $tag --json tagName *> $null
-          $releaseExists = $LASTEXITCODE -eq 0
-          $global:LASTEXITCODE = 0
-
-          if ($releaseExists) {
-            & gh release edit $tag --draft --title $tag --notes-file $notesPath
-          } else {
-            & gh release create $tag --draft --title $tag --target $env:GITHUB_SHA --notes-file $notesPath
-          }
-
-          if ($LASTEXITCODE -ne 0) {
-            throw "Failed to create or update draft release."
-          }
+          tag="v${{ needs.metadata.outputs.version }}"
+          if gh release view "$tag" --json tagName >/dev/null 2>&1; then
+            gh release edit "$tag" --draft --title "$tag" --notes-file "${{ steps.notes.outputs.path }}"
+          else
+            gh release create "$tag" --draft --title "$tag" --target "$GITHUB_SHA" --notes-file "${{ steps.notes.outputs.path }}"
+          fi
 
       - name: Upload release assets
-        if: steps.tag_state.outputs.mode != 'skip'
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
+        shell: bash
         run: |
-          $version = "${{ steps.version.outputs.version }}"
-          $tag = "v$version"
-          $releaseDir = Join-Path $env:GITHUB_WORKSPACE "target\release"
-          $portable = Join-Path $releaseDir "usb_mirror_sync-portable-v$version.zip"
-          $installer = Join-Path $releaseDir "usb_mirror_sync-setup-v$version.exe"
-
-          & gh release upload $tag $portable $installer --clobber
-          if ($LASTEXITCODE -ne 0) {
-            throw "Failed to upload release assets."
-          }
+          tag="v${{ needs.metadata.outputs.version }}"
+          find release-artifacts -type f -print0 | xargs -0 gh release upload "$tag" --clobber
