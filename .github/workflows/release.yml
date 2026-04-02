@@ -139,14 +139,14 @@ jobs:
           keychain_path="$RUNNER_TEMP/usb-mirror-sync.keychain-db"
           certificate_path="$RUNNER_TEMP/usb-mirror-sync-signing.p12"
           CERTIFICATE_PATH="$certificate_path" python - <<'PY'
-import base64
-import os
-from pathlib import Path
+          import base64
+          import os
+          from pathlib import Path
 
-Path(os.environ["CERTIFICATE_PATH"]).write_bytes(
-    base64.b64decode(os.environ["MACOS_CERTIFICATE_P12_BASE64"])
-)
-PY
+          Path(os.environ["CERTIFICATE_PATH"]).write_bytes(
+              base64.b64decode(os.environ["MACOS_CERTIFICATE_P12_BASE64"])
+          )
+          PY
           security create-keychain -p "" "$keychain_path"
           security set-keychain-settings -lut 21600 "$keychain_path"
           security unlock-keychain -p "" "$keychain_path"
