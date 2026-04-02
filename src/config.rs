@@ -497,7 +497,7 @@ mod tests {
     #[test]
     fn target_path_normalizes_cleanly() {
         let path = normalize_relative_target(r"Backups\Docs\2026").unwrap();
-        assert_eq!(path, PathBuf::from(r"Backups\Docs\2026"));
+        assert_eq!(path, PathBuf::from("Backups").join("Docs").join("2026"));
     }
 
     #[test]
