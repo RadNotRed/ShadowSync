@@ -1,0 +1,28 @@
+{
+  "drive": {
+    "letter": "E",
+    "path": null,
+    "eject_after_sync": true
+  },
+  "app": {
+    "sync_on_insert": true,
+    "sync_while_mounted": true,
+    "auto_sync_to_usb": false,
+    "poll_interval_seconds": 2
+  },
+  "cache": {
+    "shadow_copy": true,
+    "clear_shadow_on_eject": false
+  },
+  "compare": {
+    "hash_on_metadata_change": true
+  },
+  "jobs": [
+    {
+      "name": "Documents",
+      "source": "Backups\\Documents",
+      "target": "C:\\Users\\rad\\Documents\\Important",
+      "mirror_deletes": true
+    }
+  ]
+}

@@ -1,0 +1,72 @@
+site_name: ShadowSync
+site_description: Cross-platform tray app for mirroring USB folders onto a PC with a shadow cache, tray controls, reset tools, and packaged releases.
+site_url: https://radnotred.github.io/USBFileSync/
+repo_url: https://github.com/RadNotRed/USBFileSync
+repo_name: RadNotRed/USBFileSync
+edit_uri: edit/main/docs/
+
+theme:
+  name: material
+  logo: assets/brand/icon.svg
+  favicon: assets/brand/icon.svg
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: slate
+      accent: teal
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: black
+      accent: teal
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - content.action.edit
+    - content.code.copy
+    - search.highlight
+    - search.suggest
+    - toc.follow
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - def_list
+  - md_in_html
+  - tables
+  - pymdownx.highlight
+  - pymdownx.inlinehilite
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+
+extra_javascript:
+  - https://unpkg.com/mermaid@11/dist/mermaid.min.js
+  - assets/javascripts/mermaid-init.js
+
+extra_css:
+  - assets/stylesheets/extra.css
+
+nav:
+  - Home: index.md
+  - Setup:
+      - Getting Started: getting-started.md
+      - Configuration: configuration.md
+      - Tray App: tray-app.md
+      - Troubleshooting: troubleshooting.md
+      - Reset and Cleanup: reset-and-cleanup.md
+  - How It Works:
+      - Sync Model: sync-model.md
+  - Developer:
+      - Installer and Releases: installer-and-releases.md
+      - Release Artifacts: releases.md
+      - Contributing: contributing.md
