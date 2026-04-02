@@ -1,10 +1,10 @@
 # Contributing
 
-USB Mirror Sync is a Windows-first utility with file movement, caching, packaging, and tray UX all tied together. Keep changes scoped and document behavior changes in the same patch.
+USB Mirror Sync is a cross-platform utility with file movement, caching, packaging, and tray UX all tied together. Keep changes scoped and document behavior changes in the same patch.
 
 ## Quick Checklist
 
-- Keep Windows behavior explicit
+- Keep platform-specific behavior explicit
 - Preserve the documented sync model unless you are intentionally changing it
 - Add or update tests when sync logic changes
 - Update the docs when config fields, workflows, packaging, or tray behavior change
@@ -22,5 +22,6 @@ python -m mkdocs build --strict
 
 - `src/sync_engine.rs`: sync direction, delete semantics, manifest handling
 - `src/app.rs`: tray behavior, status, startup flow, config recovery
-- `assets/setup_wizard.ps1`: user-facing setup experience
+- `src/wizard.rs`: cross-platform setup experience
 - `.github/workflows/`: release and documentation automation
+- `tools/reset/`: local cleanup and reset behavior

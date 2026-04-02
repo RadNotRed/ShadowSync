@@ -27,6 +27,10 @@ Only one instance is allowed. Starting a second copy shows an `Already running` 
 
 ## Where to Look for Logs
 
-Use the tray action `Open log`, or inspect:
+Use the tray action `Open log` or `Open app folder` first. If you want a full clean slate, use the reset scripts in `tools/reset/`.
 
-`%LOCALAPPDATA%\UsbMirrorSync\sync.log`
+The reset tools are:
+
+- `tools/reset/reset-windows.bat`
+- `tools/reset/reset-macos.sh`
+- `tools/reset/reset-linux.sh`

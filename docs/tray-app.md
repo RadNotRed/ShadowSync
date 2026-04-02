@@ -2,7 +2,7 @@
 
 ## Tray Menu
 
-The app lives in the Windows notification area and exposes the main workflow through the tray menu.
+The app lives in the system tray or menu bar area and exposes the main workflow through the tray menu.
 
 Typical actions:
 
@@ -10,6 +10,8 @@ Typical actions:
 - `Sync to USB now`
 - `Eject drive`
 - `Setup Wizard`
+- `Open mounted drive`
+- `Open shadow cache`
 - `Open raw config`
 - `Open log`
 - `Open app folder`
@@ -30,16 +32,15 @@ This keeps the tray UI compact without losing visibility into what is happening.
 
 ## Setup Wizard
 
-The setup wizard is a Windows PowerShell + WinForms UI that helps edit `config.json` without hand-editing JSON.
+The setup wizard is a Rust desktop UI that helps edit `config.json` without hand-editing JSON.
 
 It includes:
 
-- Overview, Jobs, and Advanced tabs
-- job grid editing
+- cross-platform drive and mount-path setup
+- job list editing
 - path browse actions
-- workflow explanations
-- hover tooltips
 - config recovery context when a broken config is repaired
+- save and save-and-close flows
 
 ## Single-Instance Protection
 

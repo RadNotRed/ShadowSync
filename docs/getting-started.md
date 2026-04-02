@@ -2,21 +2,30 @@
 
 ## Choose a Release
 
-USB Mirror Sync ships in two Windows-friendly forms:
+USB Mirror Sync ships in platform-specific forms:
 
-- Portable zip: unzip and run `usb_mirror_sync.exe`
-- Installer: installs the app, Start Menu entry, optional desktop shortcut, and optional startup registration
+- Windows: portable zip or installer
+- macOS: `.dmg` plus a `.tar.gz` fallback
+- Linux: per-architecture `.tar.gz`
 
-Startup is disabled by default in the installer.
+Startup is disabled by default in the Windows installer.
 
 ## First Launch
 
-On first launch the app creates:
+1. Launch the app.
+2. Open `Setup Wizard` from the tray/menu bar icon.
+3. Point the app at the USB source:
+   - Windows: set `drive.letter`
+   - macOS/Linux: set `drive.path`
+4. Add at least one job mapping a USB-relative `source` to an absolute local `target`.
+5. Save the config and leave the app running in the tray.
 
-- `%LOCALAPPDATA%\UsbMirrorSync\config.json`
-- `%LOCALAPPDATA%\UsbMirrorSync\manifest.json`
-- `%LOCALAPPDATA%\UsbMirrorSync\shadow\`
-- `%LOCALAPPDATA%\UsbMirrorSync\sync.log`
+On first launch the app creates a per-user data directory with:
+
+- `config.json`
+- `manifest.json`
+- `shadow/`
+- `sync.log`
 
 If the config is missing or invalid, the app can open the Setup Wizard automatically and recover to a safe default config.
 
@@ -69,8 +78,20 @@ Tray actions include:
 - `Sync to USB now`
 - `Eject drive`
 - `Setup Wizard`
+- `Open mounted drive`
+- `Open shadow cache`
 - `Open raw config`
 - `Open log`
 - `Open app folder`
 
 If a second copy of the app is launched, the single-instance guard shows a warning and lets you cancel or retry startup.
+
+## Clean Reset
+
+If you want to wipe local app state and start fresh, use the scripts in `tools/reset/`:
+
+- `tools/reset/reset-windows.bat`
+- `tools/reset/reset-macos.sh`
+- `tools/reset/reset-linux.sh`
+
+These are intended to remove the app's per-user config, manifest, logs, and shadow cache. They are for local state cleanup, not for uninstalling release artifacts.

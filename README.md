@@ -17,6 +17,7 @@ USB Mirror Sync is a cross-platform tray app for keeping selected folders from a
 - GitHub Pages docs: `https://radnotred.github.io/USBFileSync/`
 - Local docs source: [`docs/`](docs/)
 - Example config: [`config.example.json`](config.example.json)
+- Reset and cleanup tools: [`tools/reset/`](tools/reset/)
 - Contribution guide: [`CONTRIBUTING.md`](CONTRIBUTING.md)
 
 ## Install
@@ -36,18 +37,26 @@ Release artifacts are produced automatically from the version in `Cargo.toml` fo
 
 Windows keeps the installer with optional desktop shortcut creation and optional run-at-startup registration. Startup is off by default. macOS now ships a drag-to-Applications `.dmg` plus a raw archive fallback. Linux ships per-architecture archives.
 
-## Runtime Files
+## First Launch
 
-On first launch the app creates:
+Use the native `Setup Wizard` from the tray menu for guided setup, or edit `config.json` directly.
 
-- `%LOCALAPPDATA%\UsbMirrorSync\config.json`
-- `%LOCALAPPDATA%\UsbMirrorSync\manifest.json`
-- `%LOCALAPPDATA%\UsbMirrorSync\shadow\`
-- `%LOCALAPPDATA%\UsbMirrorSync\sync.log`
+Basic setup:
 
-Use the tray menu `Setup Wizard` action for guided configuration, or edit `config.json` directly.
+- Windows: install or unzip the release, launch the app, then set `drive.letter`
+- macOS: open the `.dmg`, drag the app to `Applications`, launch it, then set `drive.path`
+- Linux: extract the archive, launch the binary, then set `drive.path`
 
 On Windows, set `drive.letter`. On macOS and Linux, set `drive.path` to the mounted USB root.
+
+The app creates a per-user data directory containing:
+
+- `config.json`
+- `manifest.json`
+- `shadow/`
+- `sync.log`
+
+Use the tray actions to open the config, log, app-data folder, mounted drive, or shadow cache.
 
 ## Development
 
