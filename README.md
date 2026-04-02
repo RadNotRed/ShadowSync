@@ -5,7 +5,9 @@ Windows tray app for syncing one or more folders from a USB drive identified by 
 What this MVP does:
 
 - Detects a configured drive letter like `E:`
-- Auto-syncs when the drive appears and can keep re-checking while mounted, or lets you right-click the tray icon and run `Sync now`
+- Auto-syncs when the drive appears
+- Watches the USB for changes while mounted instead of re-running a timed full sync
+- Can optionally watch the local target and push changes back to the USB
 - Mirrors multiple USB folders into local PC folders
 - Shows live sync progress in the tray menu and tooltip
 - Skips unchanged files using a persistent local manifest cache
@@ -45,6 +47,7 @@ Example:
   "app": {
     "sync_on_insert": true,
     "sync_while_mounted": true,
+    "auto_sync_to_usb": false,
     "poll_interval_seconds": 2
   },
   "cache": {
@@ -72,7 +75,9 @@ There are two layers of cache:
 - `manifest.json`: persistent metadata and hashes used to skip unchanged files on later runs
 - `shadow\`: optional local shadow cache that mirrors the USB source and also acts as the staging source for the real target folder
 
-`shadow` is not the live folder. Your configured `target` folder is the live mirrored destination on the PC. The intended flow is `USB -> shadow cache -> live target`.
+`shadow` is not the live folder. Your configured `target` folder is the live mirrored destination on the PC. The normal pull flow is `USB -> shadow cache -> live target`.
+
+Manual `Sync to USB now` uses the reverse path: `live target -> shadow cache -> USB`.
 
 If you want `shadow` to remain as a persistent local cache/master copy, set `clear_shadow_on_eject` to `false`. If it is `true`, the cache is deleted after eject/remove and only the manifest remains.
 
@@ -89,6 +94,8 @@ The binary will be at:
 ## Notes
 
 - If the USB drive was changed outside this app, the next run may do a full recopy of tracked files to re-establish a known state.
-- `poll_interval_seconds` is both the drive-detection interval and the continuous re-check interval while the USB stays mounted.
+- `poll_interval_seconds` is now the drive-detection and config-reload interval. Mounted-folder changes are handled by filesystem watchers.
+- `sync_while_mounted: true` means USB-side file changes trigger `USB -> shadow -> target` automatically while the drive stays mounted.
+- `auto_sync_to_usb: true` means local target changes trigger `target -> shadow -> USB` automatically while the drive stays mounted.
 - `mirror_deletes: true` only deletes files from `shadow` and the local target when they were removed from the USB source. Deleting a file from the local target does not delete it from the USB.
-- The tray menu exposes `Sync now`, `Eject drive`, `Setup Wizard`, `Open raw config`, `Open log`, `Open app folder`, and `Quit`.
+- The tray menu exposes `Sync from USB now`, `Sync to USB now`, `Eject drive`, `Setup Wizard`, `Open raw config`, `Open log`, `Open app folder`, and `Quit`.
