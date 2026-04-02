@@ -85,9 +85,9 @@ Each job maps one USB-relative source path to one absolute PC target path.
   },
   "jobs": [
     {
-      "name": "ArcGIS",
-      "source": "SCPD MVA\\SCPD TICKETS 2024",
-      "target": "C:\\Users\\rad\\Documents\\Important",
+      "name": "ExampleType",
+      "source": "MVA\\Example Folder On USB",
+      "target": "C:\\Users\\user\\Documents\\ExampleFolder",
       "mirror_deletes": true
     }
   ]
