@@ -42,5 +42,6 @@ nav:
   - How Sync Works: sync-model.md
   - Tray App: tray-app.md
   - Installer and Releases: installer-and-releases.md
+  - Release Artifacts: releases.md
   - Troubleshooting: troubleshooting.md
   - Contributing: contributing.md

@@ -50,5 +50,5 @@ For local docs work:
 
 ```powershell
 python -m pip install -r requirements-docs.txt
-mkdocs serve
+python -m mkdocs serve
 ```

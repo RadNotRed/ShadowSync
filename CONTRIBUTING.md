@@ -29,8 +29,8 @@ Docs commands:
 
 ```powershell
 python -m pip install -r requirements-docs.txt
-mkdocs build --strict
-mkdocs serve
+python -m mkdocs build --strict
+python -m mkdocs serve
 ```
 
 ## Project Areas
@@ -56,7 +56,7 @@ Before pushing:
 
 - Run `cargo test`
 - Run `cargo build --release` for packaging-related changes
-- Run `mkdocs build --strict` for docs changes
+- Run `python -m mkdocs build --strict` for docs changes
 
 If a change affects installer or release packaging, verify the relevant workflow or packaging script paths as well.
 
