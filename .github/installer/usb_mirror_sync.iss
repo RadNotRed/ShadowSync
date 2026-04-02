@@ -18,6 +18,14 @@
   #define OutputBase "usb_mirror_sync-setup"
 #endif
 
+#ifndef ArchitecturesAllowed
+  #define ArchitecturesAllowed "x64compatible"
+#endif
+
+#ifndef ArchitecturesInstallIn64BitMode
+  #define ArchitecturesInstallIn64BitMode "x64compatible"
+#endif
+
 [Setup]
 AppId=Rad.UsbMirrorSync
 AppName=USB Mirror Sync
@@ -35,8 +43,8 @@ Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
 PrivilegesRequired=lowest
-ArchitecturesAllowed=x64compatible
-ArchitecturesInstallIn64BitMode=x64compatible
+ArchitecturesAllowed={#ArchitecturesAllowed}
+ArchitecturesInstallIn64BitMode={#ArchitecturesInstallIn64BitMode}
 DisableProgramGroupPage=no
 UsePreviousTasks=yes
 ChangesAssociations=no

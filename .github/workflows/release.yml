@@ -54,13 +54,27 @@ jobs:
   build-windows:
     needs: metadata
     if: needs.metadata.outputs.mode != 'skip'
-    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-latest
+            target: x86_64-pc-windows-msvc
+            arch: x64
+            installer_arch: x64compatible
+          - runner: windows-11-arm
+            target: aarch64-pc-windows-msvc
+            arch: arm64
+            installer_arch: arm64
+    runs-on: ${{ matrix.runner }}
     steps:
       - name: Checkout
         uses: actions/checkout@v5
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
 
       - name: Install Inno Setup
         shell: pwsh
@@ -68,67 +82,113 @@ jobs:
 
       - name: Test
         shell: pwsh
-        run: cargo test --locked
+        run: cargo test --locked --target ${{ matrix.target }}
 
       - name: Build packages
         shell: pwsh
-        run: .\.github\scripts\package-release.ps1 -RepoRoot $pwd.Path
+        run: .\.github\scripts\package-release.ps1 -RepoRoot $pwd.Path -TargetTriple "${{ matrix.target }}" -ArchLabel "${{ matrix.arch }}" -InstallerArchitecture "${{ matrix.installer_arch }}"
 
       - name: Upload workflow artifacts
         uses: actions/upload-artifact@v6
         with:
-          name: windows-release
+          name: windows-release-${{ matrix.arch }}
           path: |
-            target/release/usb_mirror_sync-portable-v${{ needs.metadata.outputs.version }}.zip
-            target/release/usb_mirror_sync-setup-v${{ needs.metadata.outputs.version }}.exe
+            target/${{ matrix.target }}/release/usb_mirror_sync-windows-${{ matrix.arch }}-portable-v${{ needs.metadata.outputs.version }}.zip
+            target/${{ matrix.target }}/release/usb_mirror_sync-windows-${{ matrix.arch }}-setup-v${{ needs.metadata.outputs.version }}.exe
 
   build-macos:
     needs: metadata
     if: needs.metadata.outputs.mode != 'skip'
-    runs-on: macos-latest
+    env:
+      MACOS_SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
+      MACOS_CERTIFICATE_P12_BASE64: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 }}
+      MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+      MACOS_NOTARY_APPLE_ID: ${{ secrets.MACOS_NOTARY_APPLE_ID }}
+      MACOS_NOTARY_TEAM_ID: ${{ secrets.MACOS_NOTARY_TEAM_ID }}
+      MACOS_NOTARY_APP_PASSWORD: ${{ secrets.MACOS_NOTARY_APP_PASSWORD }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-latest
+            target: aarch64-apple-darwin
+            arch: arm64
+          - runner: macos-15-intel
+            target: x86_64-apple-darwin
+            arch: x64
+    runs-on: ${{ matrix.runner }}
     steps:
       - name: Checkout
         uses: actions/checkout@v5
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
 
       - name: Test
-        run: cargo test --locked
+        run: cargo test --locked --target ${{ matrix.target }}
 
       - name: Build release binary
-        run: cargo build --release --locked
+        run: cargo build --release --locked --target ${{ matrix.target }}
+
+      - name: Import macOS signing certificate
+        if: ${{ env.MACOS_CERTIFICATE_P12_BASE64 != '' && env.MACOS_CERTIFICATE_PASSWORD != '' }}
+        shell: bash
+        run: |
+          keychain_path="$RUNNER_TEMP/usb-mirror-sync.keychain-db"
+          certificate_path="$RUNNER_TEMP/usb-mirror-sync-signing.p12"
+          CERTIFICATE_PATH="$certificate_path" python - <<'PY'
+import base64
+import os
+from pathlib import Path
+
+Path(os.environ["CERTIFICATE_PATH"]).write_bytes(
+    base64.b64decode(os.environ["MACOS_CERTIFICATE_P12_BASE64"])
+)
+PY
+          security create-keychain -p "" "$keychain_path"
+          security set-keychain-settings -lut 21600 "$keychain_path"
+          security unlock-keychain -p "" "$keychain_path"
+          security import "$certificate_path" -k "$keychain_path" -P "$MACOS_CERTIFICATE_PASSWORD" -T /usr/bin/codesign -T /usr/bin/security
+          existing_keychains="$(security list-keychains -d user | tr -d '"')"
+          security list-keychains -d user -s "$keychain_path" $existing_keychains
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "" "$keychain_path"
 
       - name: Package macOS artifact
         shell: bash
-        run: |
-          version="${{ needs.metadata.outputs.version }}"
-          arch="$(uname -m)"
-          stage="target/release/package-macos"
-          artifact="target/release/usb_mirror_sync-macos-${arch}-v${version}.tar.gz"
-          rm -rf "$stage"
-          mkdir -p "$stage"
-          cp target/release/usb_mirror_sync "$stage/"
-          cp README.md "$stage/"
-          cp config.example.json "$stage/"
-          tar -czf "$artifact" -C "$stage" .
+        run: bash .github/scripts/package-macos.sh "$PWD" "${{ matrix.target }}" "${{ matrix.arch }}"
 
       - name: Upload workflow artifacts
         uses: actions/upload-artifact@v6
         with:
-          name: macos-release
-          path: target/release/usb_mirror_sync-macos-*-v${{ needs.metadata.outputs.version }}.tar.gz
+          name: macos-release-${{ matrix.arch }}
+          path: |
+            target/${{ matrix.target }}/release/usb_mirror_sync-macos-${{ matrix.arch }}-v${{ needs.metadata.outputs.version }}.tar.gz
+            target/${{ matrix.target }}/release/usb_mirror_sync-macos-${{ matrix.arch }}-v${{ needs.metadata.outputs.version }}.dmg
 
   build-linux:
     needs: metadata
     if: needs.metadata.outputs.mode != 'skip'
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            arch: x64
+          - runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
     steps:
       - name: Checkout
         uses: actions/checkout@v5
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
 
       - name: Install Linux UI dependencies
         run: |
@@ -136,30 +196,20 @@ jobs:
           sudo apt-get install -y libgtk-3-dev libayatana-appindicator3-dev
 
       - name: Test
-        run: cargo test --locked
+        run: cargo test --locked --target ${{ matrix.target }}
 
       - name: Build release binary
-        run: cargo build --release --locked
+        run: cargo build --release --locked --target ${{ matrix.target }}
 
       - name: Package Linux artifact
         shell: bash
-        run: |
-          version="${{ needs.metadata.outputs.version }}"
-          arch="$(uname -m)"
-          stage="target/release/package-linux"
-          artifact="target/release/usb_mirror_sync-linux-${arch}-v${version}.tar.gz"
-          rm -rf "$stage"
-          mkdir -p "$stage"
-          cp target/release/usb_mirror_sync "$stage/"
-          cp README.md "$stage/"
-          cp config.example.json "$stage/"
-          tar -czf "$artifact" -C "$stage" .
+        run: bash .github/scripts/package-linux.sh "$PWD" "${{ matrix.target }}" "${{ matrix.arch }}"
 
       - name: Upload workflow artifacts
         uses: actions/upload-artifact@v6
         with:
-          name: linux-release
-          path: target/release/usb_mirror_sync-linux-*-v${{ needs.metadata.outputs.version }}.tar.gz
+          name: linux-release-${{ matrix.arch }}
+          path: target/${{ matrix.target }}/release/usb_mirror_sync-linux-${{ matrix.arch }}-v${{ needs.metadata.outputs.version }}.tar.gz
 
   release:
     needs:

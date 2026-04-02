@@ -1,5 +1,8 @@
 param(
-    [string]$RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
+    [string]$RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path,
+    [string]$TargetTriple = "x86_64-pc-windows-msvc",
+    [string]$ArchLabel = "x64",
+    [string]$InstallerArchitecture = "x64compatible"
 )
 
 $ErrorActionPreference = "Stop"
@@ -55,14 +58,14 @@ function Export-EmbeddedAppIcon {
 
 $cargoToml = Join-Path $RepoRoot "Cargo.toml"
 $version = Get-PackageVersion -CargoTomlPath $cargoToml
-$releaseDir = Join-Path $RepoRoot "target\release"
+$releaseDir = Join-Path $RepoRoot ("target\{0}\release" -f $TargetTriple)
 
 Write-Host "Building release binary..."
 Push-Location $RepoRoot
 try {
-    & cargo build --release --locked
+    & cargo build --release --locked --target $TargetTriple
     if ($LASTEXITCODE -ne 0) {
-        throw "cargo build --release failed."
+        throw "cargo build --release failed for $TargetTriple."
     }
 } finally {
     Pop-Location
@@ -84,9 +87,8 @@ New-Item -ItemType Directory -Path $portableRoot -Force | Out-Null
 Copy-Item -LiteralPath $exePath -Destination (Join-Path $portableRoot "usb_mirror_sync.exe") -Force
 Copy-Item -LiteralPath (Join-Path $RepoRoot "README.md") -Destination (Join-Path $portableRoot "README.md") -Force
 Copy-Item -LiteralPath (Join-Path $RepoRoot "config.example.json") -Destination (Join-Path $portableRoot "config.example.json") -Force
-Copy-Item -LiteralPath (Join-Path $RepoRoot "assets\setup_wizard.ps1") -Destination (Join-Path $portableRoot "setup_wizard.ps1") -Force
 
-$portableZip = Join-Path $releaseDir ("usb_mirror_sync-portable-v{0}.zip" -f $version)
+$portableZip = Join-Path $releaseDir ("usb_mirror_sync-windows-{0}-portable-v{1}.zip" -f $ArchLabel, $version)
 if (Test-Path -LiteralPath $portableZip) {
     Remove-Item -LiteralPath $portableZip -Force
 }
@@ -94,8 +96,8 @@ Compress-Archive -Path (Join-Path $portableRoot "*") -DestinationPath $portableZ
 
 $iscc = Find-Iscc
 $installerScript = Join-Path $RepoRoot ".github\installer\usb_mirror_sync.iss"
-$installerBase = "usb_mirror_sync-setup-v$version"
-& $iscc "/DAppVersion=$version" "/DSourceExe=$exePath" "/DAppIcon=$iconPath" "/DOutputDir=$releaseDir" "/DOutputBase=$installerBase" $installerScript
+$installerBase = "usb_mirror_sync-windows-$ArchLabel-setup-v$version"
+& $iscc "/DAppVersion=$version" "/DSourceExe=$exePath" "/DAppIcon=$iconPath" "/DOutputDir=$releaseDir" "/DOutputBase=$installerBase" "/DArchitecturesAllowed=$InstallerArchitecture" "/DArchitecturesInstallIn64BitMode=$InstallerArchitecture" $installerScript
 if ($LASTEXITCODE -ne 0) {
     throw "Installer compilation failed."
 }

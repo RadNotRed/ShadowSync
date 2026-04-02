@@ -3949,6 +3949,7 @@ dependencies = [
  "fs2",
  "ico",
  "notify",
+ "png 0.18.1",
  "resvg",
  "rfd",
  "serde",

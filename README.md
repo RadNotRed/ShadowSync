@@ -21,14 +21,20 @@ USB Mirror Sync is a cross-platform tray app for keeping selected folders from a
 
 ## Install
 
-Release artifacts are produced automatically from the version in `Cargo.toml`:
+Release artifacts are produced automatically from the version in `Cargo.toml` for mainstream 64-bit desktop targets:
 
-- `usb_mirror_sync-portable-v<version>.zip`
-- `usb_mirror_sync-setup-v<version>.exe`
-- `usb_mirror_sync-macos-<arch>-v<version>.tar.gz`
-- `usb_mirror_sync-linux-<arch>-v<version>.tar.gz`
+- `usb_mirror_sync-windows-x64-portable-v<version>.zip`
+- `usb_mirror_sync-windows-x64-setup-v<version>.exe`
+- `usb_mirror_sync-windows-arm64-portable-v<version>.zip`
+- `usb_mirror_sync-windows-arm64-setup-v<version>.exe`
+- `usb_mirror_sync-macos-x64-v<version>.dmg`
+- `usb_mirror_sync-macos-x64-v<version>.tar.gz`
+- `usb_mirror_sync-macos-arm64-v<version>.dmg`
+- `usb_mirror_sync-macos-arm64-v<version>.tar.gz`
+- `usb_mirror_sync-linux-x64-v<version>.tar.gz`
+- `usb_mirror_sync-linux-arm64-v<version>.tar.gz`
 
-Windows keeps the installer with optional desktop shortcut creation and optional run-at-startup registration. Startup is off by default.
+Windows keeps the installer with optional desktop shortcut creation and optional run-at-startup registration. Startup is off by default. macOS now ships a drag-to-Applications `.dmg` plus a raw archive fallback. Linux ships per-architecture archives.
 
 ## Runtime Files
 
