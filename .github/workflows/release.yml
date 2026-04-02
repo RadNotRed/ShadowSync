@@ -49,9 +49,11 @@ jobs:
         shell: pwsh
         run: |
           $tag = "${{ steps.version.outputs.tag }}"
-          $tagSha = git rev-list -n 1 $tag 2>$null
+          $tagSha = & git rev-list -n 1 $tag 2>$null
+          $tagLookupExit = $LASTEXITCODE
+          $global:LASTEXITCODE = 0
 
-          if (-not $tagSha) {
+          if ($tagLookupExit -ne 0 -or -not $tagSha) {
             "mode=new" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
           } elseif ($tagSha -eq $env:GITHUB_SHA) {
             "mode=rerun" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
@@ -93,13 +95,14 @@ jobs:
           $tag = "v${{ steps.version.outputs.version }}"
           $notesPath = "${{ steps.notes.outputs.path }}"
 
-          gh release view $tag --json tagName *> $null
+          & gh release view $tag --json tagName *> $null
           $releaseExists = $LASTEXITCODE -eq 0
+          $global:LASTEXITCODE = 0
 
           if ($releaseExists) {
-            gh release edit $tag --draft --title $tag --notes-file $notesPath
+            & gh release edit $tag --draft --title $tag --notes-file $notesPath
           } else {
-            gh release create $tag --draft --title $tag --target $env:GITHUB_SHA --notes-file $notesPath
+            & gh release create $tag --draft --title $tag --target $env:GITHUB_SHA --notes-file $notesPath
           }
 
           if ($LASTEXITCODE -ne 0) {
@@ -118,7 +121,7 @@ jobs:
           $portable = Join-Path $releaseDir "usb_mirror_sync-portable-v$version.zip"
           $installer = Join-Path $releaseDir "usb_mirror_sync-setup-v$version.exe"
 
-          gh release upload $tag $portable $installer --clobber
+          & gh release upload $tag $portable $installer --clobber
           if ($LASTEXITCODE -ne 0) {
             throw "Failed to upload release assets."
           }

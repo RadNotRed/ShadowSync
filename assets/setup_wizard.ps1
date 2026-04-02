@@ -175,16 +175,19 @@ $form.Controls.Add($tabs)
 $tabOverview = New-Object System.Windows.Forms.TabPage
 $tabOverview.Text = "Overview"
 $tabOverview.BackColor = [System.Drawing.Color]::White
+$tabOverview.AutoScroll = $true
 $tabs.TabPages.Add($tabOverview)
 
 $tabJobs = New-Object System.Windows.Forms.TabPage
 $tabJobs.Text = "Jobs"
 $tabJobs.BackColor = [System.Drawing.Color]::White
+$tabJobs.AutoScroll = $true
 $tabs.TabPages.Add($tabJobs)
 
 $tabAdvanced = New-Object System.Windows.Forms.TabPage
 $tabAdvanced.Text = "Advanced"
 $tabAdvanced.BackColor = [System.Drawing.Color]::White
+$tabAdvanced.AutoScroll = $true
 $tabs.TabPages.Add($tabAdvanced)
 
 $groupDrive = New-Object System.Windows.Forms.GroupBox
@@ -255,15 +258,15 @@ $groupBehavior.Controls.Add((New-InfoLabel "If auto push is off, you can still u
 $groupSummary = New-Object System.Windows.Forms.GroupBox
 $groupSummary.Text = "Workflow"
 $groupSummary.Location = New-Object System.Drawing.Point(18, 196)
-$groupSummary.Size = New-Object System.Drawing.Size(500, 210)
+$groupSummary.Size = New-Object System.Drawing.Size(500, 248)
 $tabOverview.Controls.Add($groupSummary)
 
 $groupSummary.Controls.Add((New-Label "Pull Path" 18 32 90 22 $true))
-$groupSummary.Controls.Add((New-InfoLabel "USB source -> shadow cache -> local target. This is the normal ingest path." 18 58 440 32))
-$groupSummary.Controls.Add((New-Label "Push Path" 18 98 90 22 $true))
-$groupSummary.Controls.Add((New-InfoLabel "Local target -> shadow cache -> USB source. This runs manually or when auto push is enabled." 18 124 440 32))
-$groupSummary.Controls.Add((New-Label "Delete Rules" 18 164 90 22 $true))
-$groupSummary.Controls.Add((New-InfoLabel "Mirror deletes only follow the active source side for that sync direction. Local deletions do not remove USB files unless you run or enable push sync." 18 188 450 34))
+$groupSummary.Controls.Add((New-InfoLabel "USB source -> shadow cache -> local target. This is the normal ingest path." 18 58 450 38))
+$groupSummary.Controls.Add((New-Label "Push Path" 18 104 90 22 $true))
+$groupSummary.Controls.Add((New-InfoLabel "Local target -> shadow cache -> USB source. This runs manually or when auto push is enabled." 18 130 450 38))
+$groupSummary.Controls.Add((New-Label "Delete Rules" 18 176 90 22 $true))
+$groupSummary.Controls.Add((New-InfoLabel "Mirror deletes only follow the active source side for that sync direction. Local deletions do not remove USB files unless you run or enable push sync." 18 202 450 40))
 
 $groupTips = New-Object System.Windows.Forms.GroupBox
 $groupTips.Text = "Quick Tips"

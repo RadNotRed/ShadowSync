@@ -1095,6 +1095,18 @@ mod tests {
     use super::*;
     use tempfile::TempDir;
 
+    fn mounted_drive_letter(path: &Path) -> char {
+        match path.components().next() {
+            Some(std::path::Component::Prefix(prefix)) => match prefix.kind() {
+                std::path::Prefix::Disk(letter)
+                | std::path::Prefix::VerbatimDisk(letter) => char::from(letter),
+                _ => 'C',
+            },
+            _ => 'C',
+        }
+        .to_ascii_uppercase()
+    }
+
     fn make_file(path: &Path, contents: &str) {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).unwrap();
@@ -1112,7 +1124,7 @@ mod tests {
         fs::create_dir_all(&cache).unwrap();
 
         ResolvedConfig {
-            drive_letter: 'E',
+            drive_letter: mounted_drive_letter(root),
             drive_root: usb_root,
             eject_after_sync: false,
             app: crate::config::AppBehavior::default(),
