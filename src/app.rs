@@ -532,6 +532,34 @@ impl App {
         }
     }
 
+    fn open_drive_root(&mut self) {
+        let Some(config) = self.config.as_ref() else {
+            self.last_status = "Open drive blocked: fix config.json first".to_string();
+            self.update_ui();
+            return;
+        };
+
+        if let Err(error) = platform::open_in_file_manager(&config.drive_root) {
+            self.last_status = format!("Open drive failed: {error}");
+            append_log(&self.paths, &self.last_status);
+            self.update_ui();
+        }
+    }
+
+    fn open_shadow_cache(&mut self) {
+        let Some(config) = self.config.as_ref() else {
+            self.last_status = "Open shadow cache blocked: fix config.json first".to_string();
+            self.update_ui();
+            return;
+        };
+
+        if let Err(error) = platform::open_in_file_manager(&config.cache.shadow_root) {
+            self.last_status = format!("Open shadow cache failed: {error}");
+            append_log(&self.paths, &self.last_status);
+            self.update_ui();
+        }
+    }
+
     fn open_log(&mut self) {
         if let Err(error) = platform::open_path(&self.paths.log_file) {
             self.last_status = format!("Open log failed: {error}");
@@ -569,6 +597,10 @@ impl App {
             self.eject_now();
         } else if event.id == *menu.setup_wizard.id() {
             self.open_setup_wizard();
+        } else if event.id == *menu.open_drive.id() {
+            self.open_drive_root();
+        } else if event.id == *menu.open_shadow.id() {
+            self.open_shadow_cache();
         } else if event.id == *menu.open_config.id() {
             self.open_config();
         } else if event.id == *menu.open_log.id() {
@@ -637,6 +669,8 @@ impl App {
                 .set_enabled(config_loaded && self.drive_present && !self.syncing);
             menu.eject_now
                 .set_enabled(config_loaded && self.drive_present && !self.syncing);
+            menu.open_drive.set_enabled(config_loaded && self.drive_present);
+            menu.open_shadow.set_enabled(config_loaded);
         }
 
         if let Some(tray) = self.tray.as_ref() {
@@ -821,6 +855,8 @@ struct AppMenu {
     sync_to_usb_now: MenuItem,
     eject_now: MenuItem,
     setup_wizard: MenuItem,
+    open_drive: MenuItem,
+    open_shadow: MenuItem,
     open_config: MenuItem,
     open_log: MenuItem,
     open_folder: MenuItem,
@@ -836,6 +872,8 @@ impl AppMenu {
         let sync_to_usb_now = MenuItem::new("Sync to USB now", false, None);
         let eject_now = MenuItem::new("Eject drive", false, None);
         let setup_wizard = MenuItem::new("Setup Wizard", true, None);
+        let open_drive = MenuItem::new("Open mounted drive", false, None);
+        let open_shadow = MenuItem::new("Open shadow cache", false, None);
         let open_config = MenuItem::new("Open raw config", true, None);
         let open_log = MenuItem::new("Open log", true, None);
         let open_folder = MenuItem::new("Open app folder", true, None);
@@ -853,6 +891,8 @@ impl AppMenu {
             &eject_now,
             &separator_2,
             &setup_wizard,
+            &open_drive,
+            &open_shadow,
             &open_config,
             &open_log,
             &open_folder,
@@ -874,6 +914,8 @@ impl AppMenu {
                 sync_to_usb_now,
                 eject_now,
                 setup_wizard,
+                open_drive,
+                open_shadow,
                 open_config,
                 open_log,
                 open_folder,
