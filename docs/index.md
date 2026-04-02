@@ -1,42 +1,54 @@
+<div class="hero" markdown>
+
+<span class="eyebrow">USB file sync</span>
+
 # USB Mirror Sync
 
-USB Mirror Sync is a cross-platform tray app built for one job: keep selected folders from a removable USB drive mirrored onto a PC without forcing a full copy every time the drive is plugged in.
+USB Mirror Sync is a small tray app that keeps selected folders from a USB drive copied to your computer without re-copying everything every time.
+
+It is built for a simple flow: plug in the drive, sync what changed, and safely eject when you are done.
+
+</div>
 
 <div class="grid cards" markdown>
 
 -   ### Pull-First by Default
 
-    The normal path is `USB -> shadow cache -> local target`, which makes the USB the source of truth for ingest.
+    **Normal sync path:** `USB -> shadow cache -> local folder`
+
+    This keeps the USB as the source side for import and uses the shadow cache as staging.
 
 -   ### Optional Publish Back to USB
 
-    If you need it, the app can also push `local target -> shadow cache -> USB`, either manually or automatically.
+    **Optional push path:** `local folder -> shadow cache -> USB`
+
+    You can keep that manual or turn on automatic push-back later.
 
 -   ### Incremental by Design
 
-    A persistent manifest and optional shadow cache let the app skip unchanged files and reuse known state between runs.
+    The app keeps a manifest so unchanged files are skipped and later syncs stay fast.
 
 -   ### Built for the Tray
 
-    Sync, open logs, edit config, launch the setup wizard, and eject the drive directly from the taskbar icon.
+    Start a sync, open the mounted drive, inspect the shadow cache, open logs, or launch setup from the tray icon.
 
 -   ### Reset When Needed
 
-    Platform-specific cleanup scripts in `tools/reset/` can wipe app data and cached state when you need a clean start.
+    If the app state gets messy, the reset scripts can wipe local config and cache without touching your real synced folders.
 
 </div>
 
-## Core Ideas
+## What You Need To Know
 
-- Windows can use a USB drive letter; macOS and Linux use a mounted drive path.
-- `source` paths are relative to the USB root.
-- `target` paths are absolute folders on the PC.
-- `shadow` is a staging cache, not the live destination folder.
+- Windows can use a drive letter like `E:`
+- macOS and Linux use the mounted USB path instead
+- `source` is inside the USB root
+- `target` is the real folder on your computer
+- `shadow` is a local staging cache, not the live folder you work in
 
 ## Start Here
 
 - New user: [Getting Started](getting-started.md)
-- Need to hand-edit JSON: [Configuration](configuration.md)
-- Want to understand cache behavior and delete rules: [How Sync Works](sync-model.md)
-- Need to wipe config/cache state: [Reset and Cleanup](reset-and-cleanup.md)
-- Working on the repo: [Contributing](contributing.md)
+- Need to tweak settings by hand: [Configuration](configuration.md)
+- Want to understand delete rules and the cache: [How It Works](sync-model.md)
+- Need to wipe local app state: [Reset and Cleanup](reset-and-cleanup.md)

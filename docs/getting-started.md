@@ -1,6 +1,6 @@
 # Getting Started
 
-## Choose a Release
+## Pick the Right Download
 
 USB Mirror Sync ships in platform-specific forms:
 
@@ -10,7 +10,7 @@ USB Mirror Sync ships in platform-specific forms:
 
 Startup is disabled by default in the Windows installer.
 
-## First Launch
+## First Setup
 
 1. Launch the app.
 2. Open `Setup Wizard` from the tray/menu bar icon.
@@ -20,7 +20,7 @@ Startup is disabled by default in the Windows installer.
 4. Add at least one job mapping a USB-relative `source` to an absolute local `target`.
 5. Save the config and leave the app running in the tray.
 
-On first launch the app creates a per-user data directory with:
+The app then creates a small per-user data folder with:
 
 - `config.json`
 - `manifest.json`
@@ -29,14 +29,12 @@ On first launch the app creates a per-user data directory with:
 
 If the config is missing or invalid, the app can open the Setup Wizard automatically and recover to a safe default config.
 
-## Configure a First Job
+## Example Job
 
-You can use either:
+A basic job says:
 
-- `Setup Wizard` from the tray menu
-- Direct edits to `config.json`
-
-Each job maps one USB-side folder to one local PC folder.
+- which folder on the USB to watch
+- which folder on your computer should receive the mirrored copy
 
 Example:
 
@@ -70,7 +68,7 @@ Example:
 }
 ```
 
-## Daily Use
+## Everyday Use
 
 Tray actions include:
 
@@ -86,7 +84,7 @@ Tray actions include:
 
 If a second copy of the app is launched, the single-instance guard shows a warning and lets you cancel or retry startup.
 
-## Clean Reset
+## Need a Clean Reset?
 
 If you want to wipe local app state and start fresh, use the scripts in `tools/reset/`:
 
@@ -94,4 +92,4 @@ If you want to wipe local app state and start fresh, use the scripts in `tools/r
 - `tools/reset/reset-macos.sh`
 - `tools/reset/reset-linux.sh`
 
-These are intended to remove the app's per-user config, manifest, logs, and shadow cache. They are for local state cleanup, not for uninstalling release artifacts.
+These remove local app state like config, manifest, logs, and shadow cache. They do not delete the folders you synced or files on the USB drive.

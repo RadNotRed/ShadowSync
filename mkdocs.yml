@@ -11,12 +11,23 @@ theme:
   favicon: assets/brand/icon.svg
   palette:
     - scheme: default
-      primary: blue grey
-      accent: cyan
+      primary: slate
+      accent: teal
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - scheme: slate
+      primary: black
+      accent: teal
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
   features:
     - navigation.tabs
     - navigation.sections
+    - navigation.expand
     - navigation.top
+    - content.action.edit
     - content.code.copy
     - search.highlight
     - search.suggest
@@ -36,13 +47,15 @@ extra_css:
   - assets/stylesheets/extra.css
 
 nav:
-  - Overview: index.md
-  - Getting Started: getting-started.md
-  - Configuration: configuration.md
-  - How Sync Works: sync-model.md
-  - Tray App: tray-app.md
-  - Reset and Cleanup: reset-and-cleanup.md
-  - Installer and Releases: installer-and-releases.md
-  - Release Artifacts: releases.md
-  - Troubleshooting: troubleshooting.md
-  - Contributing: contributing.md
+  - Home: index.md
+  - Setup:
+      - Getting Started: getting-started.md
+      - Configuration: configuration.md
+      - Tray App: tray-app.md
+      - Reset and Cleanup: reset-and-cleanup.md
+      - Troubleshooting: troubleshooting.md
+  - How It Works: sync-model.md
+  - Developer:
+      - Installer and Releases: installer-and-releases.md
+      - Release Artifacts: releases.md
+      - Contributing: contributing.md

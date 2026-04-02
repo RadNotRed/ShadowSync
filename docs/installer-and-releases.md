@@ -1,6 +1,8 @@
 # Installer and Releases
 
-## Installer Behavior
+This page is for packaging and release details. Most users only need the correct download for their OS.
+
+## Windows Installer
 
 The Windows installer is built with Inno Setup and supports:
 
@@ -11,7 +13,7 @@ The Windows installer is built with Inno Setup and supports:
 
 Startup is disabled by default.
 
-## Artifact Matrix
+## Release Files
 
 The release workflow publishes native artifacts for the main 64-bit desktop targets:
 
@@ -26,7 +28,7 @@ The macOS `.dmg` contains a normal `.app` bundle plus an `Applications` shortcut
 
 Linux archives include the binary, docs, example config, and basic desktop integration files.
 
-## Automated Releases
+## Release Automation
 
 Releases are generated from GitHub Actions using the package version in `Cargo.toml`.
 
@@ -48,10 +50,6 @@ Flow:
    - `usb_mirror_sync-linux-arm64-v<version>.tar.gz`
 
 If a version tag already exists on an older commit, the workflow skips republishing until the Cargo version changes.
-
-## GitHub Pages Docs
-
-The docs site is deployed through GitHub Pages using a separate workflow and a Material for MkDocs build.
 
 ## Secrets and Variables
 

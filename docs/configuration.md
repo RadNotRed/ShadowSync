@@ -1,8 +1,10 @@
 # Configuration
 
-The runtime config lives at `%LOCALAPPDATA%\UsbMirrorSync\config.json`.
+Most users can use the Setup Wizard and never touch this file.
 
-## Top-Level Structure
+If you do want to edit it directly, the runtime config is stored in the app's local data folder as `config.json`.
+
+## Basic Shape
 
 ```json
 {
@@ -13,6 +15,13 @@ The runtime config lives at `%LOCALAPPDATA%\UsbMirrorSync\config.json`.
   "jobs": []
 }
 ```
+
+## The Important Parts
+
+- `drive`: where the USB is expected to appear
+- `app`: sync behavior and watch settings
+- `cache`: shadow cache behavior
+- `jobs`: which USB folders map to which local folders
 
 ## `drive`
 
@@ -56,7 +65,7 @@ Each job maps one USB-relative source path to one absolute PC target path.
 | `target` | string | none | Absolute local folder path |
 | `mirror_deletes` | bool | `true` | Follows source-side deletes for the active sync direction |
 
-## Path Rules
+## Rules
 
 - `source` must stay inside the configured USB drive.
 - `target` must be an absolute local path.
@@ -64,7 +73,7 @@ Each job maps one USB-relative source path to one absolute PC target path.
 - On macOS and Linux, set `drive.path`.
 - Duplicate job names are rejected.
 
-## Good Example
+## Example
 
 ```json
 {

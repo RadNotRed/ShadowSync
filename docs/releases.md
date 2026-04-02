@@ -1,29 +1,23 @@
 # Release Artifacts
 
-## What the Release Workflow Builds
+This page is for development and release maintenance.
+
+## What the Workflow Builds
 
 The release workflow reads `package.version` from `Cargo.toml` and creates:
 
-- `usb_mirror_sync-portable-v<version>.zip`
-- `usb_mirror_sync-setup-v<version>.exe`
+- Windows x64 portable zip and installer
+- Windows ARM64 portable zip and installer
+- macOS x64 `.dmg` and `.tar.gz`
+- macOS ARM64 `.dmg` and `.tar.gz`
+- Linux x64 `.tar.gz`
+- Linux ARM64 `.tar.gz`
 
 Both artifacts are attached to a GitHub draft release tagged as `v<version>`.
 
 ## Version Source of Truth
 
 `Cargo.toml` is the version source of truth. If the same `v<version>` tag already exists on an older commit, the release workflow skips publishing until the version is bumped.
-
-## Installer Options
-
-The Windows installer currently supports:
-
-- normal install location
-- optional desktop shortcut
-- optional startup shortcut, off by default
-
-## Portable Build
-
-The portable zip contains the executable and supporting files without writing an installation entry to Windows.
 
 ## Publishing Flow
 
