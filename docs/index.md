@@ -32,11 +32,21 @@ It is built for a simple flow: plug in the drive, sync what changed, and safely 
 
     Start a sync, open the mounted drive, inspect the shadow cache, open logs, or launch setup from the tray icon.
 
--   ### Reset When Needed
-
-    If the app state gets messy, the reset scripts can wipe local config and cache without touching your real synced folders.
-
 </div>
+
+## At a Glance
+
+```mermaid
+flowchart LR
+    A["USB drive"] --> B["Shadow cache"]
+    B --> C["Local folder"]
+    C -. "optional push" .-> B
+    B -. "optional push" .-> A
+```
+
+The normal path is from the USB into the shadow cache and then into the local folder you actually use.
+
+If you enable push-back, the same shadow cache is reused as the staging layer in the opposite direction.
 
 ## What You Need To Know
 
@@ -45,6 +55,14 @@ It is built for a simple flow: plug in the drive, sync what changed, and safely 
 - `source` is inside the USB root
 - `target` is the real folder on your computer
 - `shadow` is a local staging cache, not the live folder you work in
+
+## Typical Use
+
+1. Plug in the USB drive.
+2. Let the app sync from USB or run `Sync from USB now`.
+3. Work from the local target folder on your computer.
+4. If you use push-back, run `Sync to USB now` or let auto-push handle it.
+5. Eject the drive when you are done.
 
 ## Start Here
 

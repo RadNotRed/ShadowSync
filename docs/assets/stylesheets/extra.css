@@ -73,3 +73,16 @@
   display: inline-block;
   margin-bottom: 0.2rem;
 }
+
+.md-typeset .mermaid {
+  padding: 1rem;
+  margin: 1rem 0 1.25rem;
+  border: 1px solid var(--site-card-border);
+  border-radius: 18px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.52), rgba(255, 255, 255, 0.2));
+  box-shadow: var(--site-card-shadow);
+}
+
+[data-md-color-scheme="slate"] .md-typeset .mermaid {
+  background: linear-gradient(180deg, rgba(18, 32, 39, 0.92), rgba(13, 20, 24, 0.86));
+}
