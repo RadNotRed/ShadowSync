@@ -55,7 +55,7 @@ Source: "..\..\config.example.json"; DestDir: "{app}"; Flags: ignoreversion
 Name: "{group}\USB Mirror Sync"; Filename: "{app}\usb_mirror_sync.exe"; IconFilename: "{app}\usb_mirror_sync.ico"
 Name: "{group}\Uninstall USB Mirror Sync"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\USB Mirror Sync"; Filename: "{app}\usb_mirror_sync.exe"; IconFilename: "{app}\usb_mirror_sync.ico"; Tasks: desktopicon
-Name: "{autostart}\USB Mirror Sync"; Filename: "{app}\usb_mirror_sync.exe"; IconFilename: "{app}\usb_mirror_sync.ico"; Tasks: startup
+Name: "{userstartup}\USB Mirror Sync"; Filename: "{app}\usb_mirror_sync.exe"; IconFilename: "{app}\usb_mirror_sync.ico"; Tasks: startup
 
 [Run]
 Filename: "{app}\usb_mirror_sync.exe"; Description: "Launch USB Mirror Sync"; Flags: nowait postinstall skipifsilent
