@@ -1,0 +1,46 @@
+site_name: USB Mirror Sync
+site_description: Windows tray app for mirroring USB folders onto a PC with a shadow cache, tray controls, and installer or portable releases.
+site_url: https://radnotred.github.io/USBFileSync/
+repo_url: https://github.com/RadNotRed/USBFileSync
+repo_name: RadNotRed/USBFileSync
+edit_uri: edit/main/docs/
+
+theme:
+  name: material
+  logo: assets/brand/icon.svg
+  favicon: assets/brand/icon.svg
+  palette:
+    - scheme: default
+      primary: blue grey
+      accent: cyan
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.top
+    - content.code.copy
+    - search.highlight
+    - search.suggest
+    - toc.follow
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - def_list
+  - md_in_html
+  - tables
+  - pymdownx.highlight
+  - pymdownx.inlinehilite
+  - pymdownx.superfences
+
+extra_css:
+  - assets/stylesheets/extra.css
+
+nav:
+  - Overview: index.md
+  - Getting Started: getting-started.md
+  - Configuration: configuration.md
+  - How Sync Works: sync-model.md
+  - Tray App: tray-app.md
+  - Installer and Releases: installer-and-releases.md
+  - Troubleshooting: troubleshooting.md
+  - Contributing: contributing.md

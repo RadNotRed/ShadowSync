@@ -1,129 +1,54 @@
 # USB Mirror Sync
 
-Windows tray app for syncing one or more folders from a USB drive identified by drive letter onto your PC.
+USB Mirror Sync is a Windows tray app for keeping selected folders from a removable USB drive mirrored onto a PC, with an optional shadow cache and manual or automatic push back to the drive.
 
-What this MVP does:
+## What It Does
 
-- Detects a configured drive letter like `E:`
-- Auto-syncs when the drive appears
-- Watches the USB for changes while mounted instead of re-running a timed full sync
-- Can optionally watch the local target and push changes back to the USB
-- Mirrors multiple USB folders into local PC folders
-- Shows live sync progress in the tray menu and tooltip
-- Skips unchanged files using a persistent local manifest cache
-- Replaces changed files and optionally deletes removed files
-- Keeps an optional local shadow cache that mirrors the USB source
-- Ejects the drive after a successful sync
-- Clears the local shadow cache after eject if configured
-- Includes a richer Windows setup wizard with grouped tabs, tooltips, and recovery actions
-- Auto-opens the setup wizard when the config becomes invalid and can back up broken JSON before restoring a safe default
+- Detects a configured USB drive letter such as `E:` or `S:`
+- Pulls from `USB -> shadow cache -> local target`
+- Optionally pushes from `local target -> shadow cache -> USB`
+- Skips unchanged files using a persistent manifest cache
+- Watches mounted folders for live changes instead of doing timed full rescans
+- Shows tray-based progress, setup, logs, and manual sync actions
+- Supports both portable and installer-based releases
 
-What it assumes:
+## Documentation
 
-- Windows only
-- The USB folders are the source of truth for each configured job
-- The app writes the mirrored result into local PC folders
+- GitHub Pages docs: `https://radnotred.github.io/USBFileSync/`
+- Local docs source: [`docs/`](docs/)
+- Example config: [`config.example.json`](config.example.json)
+- Contribution guide: [`CONTRIBUTING.md`](CONTRIBUTING.md)
 
-## Config
+## Install
 
-At first launch the app creates:
+Release artifacts are produced automatically from the version in `Cargo.toml`:
+
+- `usb_mirror_sync-portable-v<version>.zip`
+- `usb_mirror_sync-setup-v<version>.exe`
+
+The installer supports optional desktop shortcut creation and optional run-at-startup registration. Startup is off by default.
+
+## Runtime Files
+
+On first launch the app creates:
 
 - `%LOCALAPPDATA%\UsbMirrorSync\config.json`
 - `%LOCALAPPDATA%\UsbMirrorSync\manifest.json`
 - `%LOCALAPPDATA%\UsbMirrorSync\shadow\`
 - `%LOCALAPPDATA%\UsbMirrorSync\sync.log`
 
-Edit `config.json` to point at your actual folders. `source` is the folder path inside the USB drive, and `target` is the absolute local PC path. A matching example is also included in this repo as [`config.example.json`](/C:/Users/rad/Documents/github/file-sync/config.example.json).
+Use the tray menu `Setup Wizard` action for guided configuration, or edit `config.json` directly.
 
-You can also use the tray menu `Setup Wizard` action to edit the config in a small Windows form instead of editing JSON directly.
-
-Example:
-
-```json
-{
-  "drive": {
-    "letter": "E",
-    "eject_after_sync": true
-  },
-  "app": {
-    "sync_on_insert": true,
-    "sync_while_mounted": true,
-    "auto_sync_to_usb": false,
-    "poll_interval_seconds": 2
-  },
-  "cache": {
-    "shadow_copy": true,
-    "clear_shadow_on_eject": false
-  },
-  "compare": {
-    "hash_on_metadata_change": true
-  },
-  "jobs": [
-    {
-      "name": "Documents",
-      "source": "Backups\\Documents",
-      "target": "C:\\Users\\rad\\Documents\\Important",
-      "mirror_deletes": true
-    }
-  ]
-}
-```
-
-## Cache model
-
-There are two layers of cache:
-
-- `manifest.json`: persistent metadata and hashes used to skip unchanged files on later runs
-- `shadow\`: optional local shadow cache that mirrors the USB source and also acts as the staging source for the real target folder
-
-`shadow` is not the live folder. Your configured `target` folder is the live mirrored destination on the PC. The normal pull flow is `USB -> shadow cache -> live target`.
-
-Manual `Sync to USB now` uses the reverse path: `live target -> shadow cache -> USB`.
-
-If you want `shadow` to remain as a persistent local cache/master copy, set `clear_shadow_on_eject` to `false`. If it is `true`, the cache is deleted after eject/remove and only the manifest remains.
-
-## Build
+## Development
 
 ```powershell
+cargo test
 cargo build --release
 ```
 
-The binary will be at:
+For local docs work:
 
-- [`target\release\usb_mirror_sync.exe`](/C:/Users/rad/Documents/github/file-sync/target/release/usb_mirror_sync.exe)
-
-## Releases
-
-GitHub Actions now builds and drafts releases from the Cargo package version in `Cargo.toml`.
-
-Flow:
-
-1. Push to `main` or run the `Draft Release` workflow manually.
-2. The workflow reads `package.version` from `Cargo.toml` and uses `v<version>` as the tag.
-3. If that version tag already exists on an older commit, the workflow skips publishing until you bump the Cargo version.
-4. It runs tests, builds the release binary, creates a portable zip, and compiles the Windows installer.
-5. It asks GitHub for generated release notes, then creates or updates a draft release.
-6. It uploads both release assets to that draft release.
-
-Release artifacts land in `target\release`:
-
-- `usb_mirror_sync-portable-v<version>.zip`
-- `usb_mirror_sync-setup-v<version>.exe`
-
-Required repo secrets or variables:
-
-- None. The workflow uses the built-in `GITHUB_TOKEN`.
-
-Optional future variables, if you later add code signing:
-
-- `WINDOWS_CERT_BASE64`
-- `WINDOWS_CERT_PASSWORD`
-
-## Notes
-
-- If the USB drive was changed outside this app, the next run may do a full recopy of tracked files to re-establish a known state.
-- `poll_interval_seconds` is now the drive-detection and config-reload interval. Mounted-folder changes are handled by filesystem watchers.
-- `sync_while_mounted: true` means USB-side file changes trigger `USB -> shadow -> target` automatically while the drive stays mounted.
-- `auto_sync_to_usb: true` means local target changes trigger `target -> shadow -> USB` automatically while the drive stays mounted.
-- `mirror_deletes: true` only deletes files from `shadow` and the local target when they were removed from the USB source. Deleting a file from the local target does not delete it from the USB.
-- The tray menu exposes `Sync from USB now`, `Sync to USB now`, `Eject drive`, `Setup Wizard`, `Open raw config`, `Open log`, `Open app folder`, and `Quit`.
+```powershell
+python -m pip install -r requirements-docs.txt
+mkdocs serve
+```
