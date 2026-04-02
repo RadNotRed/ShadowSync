@@ -336,6 +336,7 @@ fn normalize_cache_root(root: PathBuf, app_dir: &Path) -> Result<PathBuf> {
     Ok(app_dir.join(root))
 }
 
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 fn normalize_drive_letter(value: &str) -> Result<char> {
     let trimmed = value.trim().trim_end_matches('\\');
     let candidate = trimmed.trim_end_matches(':');

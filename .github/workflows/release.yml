@@ -6,6 +6,9 @@ on:
       - main
   workflow_dispatch:
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
 permissions:
   contents: write
 
@@ -22,7 +25,7 @@ jobs:
       mode: ${{ steps.tag_state.outputs.mode }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
@@ -54,7 +57,7 @@ jobs:
     runs-on: windows-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -72,7 +75,7 @@ jobs:
         run: .\.github\scripts\package-release.ps1 -RepoRoot $pwd.Path
 
       - name: Upload workflow artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: windows-release
           path: |
@@ -85,7 +88,7 @@ jobs:
     runs-on: macos-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -111,7 +114,7 @@ jobs:
           tar -czf "$artifact" -C "$stage" .
 
       - name: Upload workflow artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: macos-release
           path: target/release/usb_mirror_sync-macos-*-v${{ needs.metadata.outputs.version }}.tar.gz
@@ -122,7 +125,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -153,7 +156,7 @@ jobs:
           tar -czf "$artifact" -C "$stage" .
 
       - name: Upload workflow artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: linux-release
           path: target/release/usb_mirror_sync-linux-*-v${{ needs.metadata.outputs.version }}.tar.gz
@@ -168,9 +171,15 @@ jobs:
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
     steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
       - name: Download artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         with:
           path: release-artifacts
 
@@ -186,14 +195,14 @@ jobs:
         shell: bash
         run: |
           tag="v${{ needs.metadata.outputs.version }}"
-          if gh release view "$tag" --json tagName >/dev/null 2>&1; then
-            gh release edit "$tag" --draft --title "$tag" --notes-file "${{ steps.notes.outputs.path }}"
+          if gh release view "$tag" --repo "$GH_REPO" --json tagName >/dev/null 2>&1; then
+            gh release edit "$tag" --repo "$GH_REPO" --draft --title "$tag" --notes-file "${{ steps.notes.outputs.path }}"
           else
-            gh release create "$tag" --draft --title "$tag" --target "$GITHUB_SHA" --notes-file "${{ steps.notes.outputs.path }}"
+            gh release create "$tag" --repo "$GH_REPO" --draft --title "$tag" --target "$GITHUB_SHA" --notes-file "${{ steps.notes.outputs.path }}"
           fi
 
       - name: Upload release assets
         shell: bash
         run: |
           tag="v${{ needs.metadata.outputs.version }}"
-          find release-artifacts -type f -print0 | xargs -0 gh release upload "$tag" --clobber
+          find release-artifacts -type f -print0 | xargs -0 gh release upload "$tag" --repo "$GH_REPO" --clobber
