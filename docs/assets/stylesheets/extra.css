@@ -87,11 +87,6 @@
   background: linear-gradient(180deg, rgba(18, 32, 39, 0.92), rgba(13, 20, 24, 0.86));
 }
 
-.hero.spotlight {
-  background: linear-gradient(135deg, rgba(63, 118, 171, 0.18), rgba(45, 79, 120, 0.18));
-  border-color: rgba(63, 118, 171, 0.4);
-}
-
 .overview-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));

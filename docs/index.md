@@ -8,22 +8,13 @@ ShadowSync keeps your USB folders mirrored on the work machine without copying e
 
 </div>
 
-<div class="hero spotlight" markdown>
-
-### Bluprints of the flow
-
-ShadowSync focuses on rapid imports and optional push-back. That blue box you liked? Here is the quick overview:
-
-- The USB drive stays the source unless you tell it otherwise.
-- Shadow cache acts as the staging ground so your local files never lock during a sync.
-- Progress, logs, and manual sync actions live in the tray—no complicated UI.
-
-</div>
-
 <div class="grid cards overview-grid" markdown>
 
 -   ### Start fast
     Plug a USB drive, point the config at it, and ShadowSync automatically picks up new files every few seconds.
+
+-   ### USB stays primary
+    Pull sync keeps the USB side as the source until you explicitly choose to push changes back.
 
 -   ### Shadow cache
     All transfers land in the shadow folder before they touch your live workspace, so you can eject at any time.
@@ -44,6 +35,8 @@ flowchart LR
     D["Cached manifest"] -- skips unchanged --> B
 ```
 
+ShadowSync normally pulls from the USB into the shadow cache and then into your working folder. If you enable push-back, the same cache is reused as the staging layer in the opposite direction.
+
 ## Quick start checklist
 
 1. Follow the [Getting Started guide](getting-started.md) to install or unzip ShadowSync for your platform.
@@ -52,7 +45,7 @@ flowchart LR
 4. Use the `Sync to USB now` menu when you want to publish edits; the shadow cache reuses the same staging area.
 5. Eject from the tray when you are done. ShadowSync will run the configured post-sync commands and optionally clear the cache.
 
-## Need more?
+## Learn more
 
 - `Configuration` explains how jobs, polling, and shadow options behave.
 - `Tray App` covers the context menu, double-instance guard, and the wizard.
