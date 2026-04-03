@@ -1,58 +1,55 @@
 # ShadowSync
 
-ShadowSync keeps a USB drive mirrored to your computer without a full copy every time. It tracks a shadow cache, watches for file changes, and exposes tray controls so you can sync, open folders, or eject safely with one menu.
+ShadowSync is a cross-platform tray app that mirrors selected USB folders to your computer with a staged shadow cache, fast incremental syncs, optional push-back, and safe eject workflows.
 
-## Why it matters
+## 📌 What it is
 
-- **Pull-first by default:** New files flow `USB → shadow cache → local folder`, which keeps the USB as the authoritative source and leaves your working directory untouched.
-- **Optional push-back:** When you edit locally, ShadowSync stages changes in the same shadow cache so you can run a one-shot push or leave it on auto-sync to publish back to USB.
-- **Fast increments:** A manifest cache skips unchanged files, and a staged shadow copy avoids locking the live folder during transfers.
-- **Native tray & wizard:** Right-click to sync, open logs, or launch the setup wizard. The app warns if another instance is running, and the wizard auto-opens when the config is missing or malformed.
-- **Cross-platform releases:** Binaries, installers, archives, and reset tools are produced for Windows, macOS, and Linux.
+ShadowSync is built for a simple removable-drive workflow:
 
-## What to do first
+- Plug in a USB drive
+- Pull changed files onto your computer
+- Work from the local folder
+- Optionally push changes back to the USB
+- Eject safely from the tray when you're done
 
-1. Install or extract ShadowSync on your platform (see the docs below for installer vs. portable formats).
-2. Launch ShadowSync so it creates `config.json`, `manifest.json`, and the `shadow` cache in your per-user data directory.
-3. Point the config at your USB drive (`drive.letter` on Windows, `drive.path` on macOS/Linux) and describe the job(s) that should mirror folders.
-4. Use the tray menu to run `Sync from USB now`, check progress, or trigger `Sync to USB now` when you want to publish changes.
-5. Eject the drive from the tray to ensure the latest copy and clear the shadow cache (if enabled).
+## ⚙️ What it does
 
-## Resources
+- `USB -> shadow cache -> local folder` pull sync by default
+- Optional `local folder -> shadow cache -> USB` push-back flow
+- Manifest-based incremental syncing to skip unchanged files
+- Tray icon controls for sync, logs, folders, setup, and eject
+- Native Rust setup wizard for easier configuration
+- Single-instance protection and config recovery handling
+- Windows, macOS, and Linux packaging support
 
-- Docs site: `https://radnotred.github.io/USBFileSync/`
-- Local docs source: [`docs/`](docs/)
-- Config example: [`config.example.json`](config.example.json)
-- Reset tools: [`tools/reset/`](tools/reset/)
-- Developer notes: [`CONTRIBUTING.md`](CONTRIBUTING.md)
+## 🚀 Quick start
 
-## Release artifacts
+1. Download the correct release for your platform from the GitHub Releases page.
+2. Launch ShadowSync and let it create its local app data files.
+3. Open the setup wizard from the tray and configure your USB source and local target.
+4. Run `Sync from USB now` to pull files onto the machine.
+5. Use `Sync to USB now` only when you want to publish changes back to the drive.
 
-Artifacts are built from the `Cargo.toml` version and include native installers as well as portable archives:
+## 📚 Documentation
 
-- `shadowsync-windows-x64-portable-v<version>.zip`
-- `shadowsync-windows-x64-setup-v<version>.exe`
-- `shadowsync-windows-arm64-portable-v<version>.zip`
-- `shadowsync-windows-arm64-setup-v<version>.exe`
-- `shadowsync-macos-x64-v<version>.tar.gz`
-- `shadowsync-macos-x64-v<version>.dmg`
-- `shadowsync-macos-arm64-v<version>.tar.gz`
-- `shadowsync-macos-arm64-v<version>.dmg`
-- `shadowsync-linux-x64-v<version>.tar.gz`
-- `shadowsync-linux-arm64-v<version>.tar.gz`
+The README stays intentionally short. Use the docs for setup, behavior, and maintenance details:
 
-## Docs & help
+- 🌐 [Docs site](https://radnotred.github.io/USBFileSync/)
+- 🛠️ [Getting Started](docs/getting-started.md)
+- 🧩 [Configuration](docs/configuration.md)
+- 🖱️ [Tray App](docs/tray-app.md)
+- 🔄 [Sync Model](docs/sync-model.md)
+- 🧹 [Reset and Cleanup](docs/reset-and-cleanup.md)
+- 📦 [Installer and Releases](docs/installer-and-releases.md)
 
-- Start setup: [`docs/getting-started.md`](docs/getting-started.md)
-- Customize jobs: [`docs/configuration.md`](docs/configuration.md)
-- Tray menu facts: [`docs/tray-app.md`](docs/tray-app.md)
-- Sync model deep dive: [`docs/sync-model.md`](docs/sync-model.md)
-- Reset helpers: [`docs/reset-and-cleanup.md`](docs/reset-and-cleanup.md)
-- Release process: [`docs/installer-and-releases.md`](docs/installer-and-releases.md)
+## 📁 Project links
 
-## Development
+- 📄 [License](LICENSE)
+- 🤝 [Contributing Guidelines](CONTRIBUTING.md)
+- 🧪 [Example Config](config.example.json)
+- 🧰 [Reset Tools](tools/reset/)
 
-Run the test suite and a release build locally:
+## 💻 Development
 
 ```powershell
 cargo test --locked
@@ -66,3 +63,6 @@ python -m pip install -r requirements-docs.txt
 python -m mkdocs serve
 ```
 
+## 🤖 Note
+
+ShadowSync was developed with AI-assisted tooling, with the repository and releases reviewed and driven through iterative manual refinement.
