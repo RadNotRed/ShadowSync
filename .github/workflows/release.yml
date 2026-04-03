@@ -239,6 +239,11 @@ jobs:
         run: |
           tag="v${{ needs.metadata.outputs.version }}"
           gh api "repos/$GITHUB_REPOSITORY/releases/generate-notes" -X POST -f tag_name="$tag" -f target_commitish="$GITHUB_SHA" --jq .body > release-notes.md
+          python .github/scripts/generate-release-notes.py \
+            --repo "$GITHUB_REPOSITORY" \
+            --tag "$tag" \
+            --artifacts-dir "release-artifacts" \
+            --notes-file "release-notes.md"
           echo "path=$PWD/release-notes.md" >> "$GITHUB_OUTPUT"
 
       - name: Create or update draft release
