@@ -142,6 +142,13 @@ struct WizardApp {
     config: AppConfig,
     status: String,
     close_after_save: bool,
+    missing_target_prompt: Option<MissingTargetPrompt>,
+}
+
+#[derive(Debug, Clone)]
+struct MissingTargetPrompt {
+    job_index: usize,
+    target_path: PathBuf,
 }
 
 impl WizardApp {
@@ -150,6 +157,7 @@ impl WizardApp {
             .ok()
             .and_then(|raw| serde_json::from_str::<AppConfig>(raw.strip_prefix('\u{feff}').unwrap_or(&raw)).ok())
             .unwrap_or_default();
+        let missing_target_prompt = first_missing_target_prompt(&config);
 
         Self {
             paths,
@@ -157,6 +165,7 @@ impl WizardApp {
             config,
             status: "Edit settings, then save the config.".to_string(),
             close_after_save: false,
+            missing_target_prompt,
         }
     }
 
@@ -267,6 +276,37 @@ impl WizardApp {
     fn browse_job_target(&mut self, index: usize) {
         if let Some(folder) = FileDialog::new().pick_folder() {
             self.config.jobs[index].target = folder.display().to_string();
+            if index == 0 {
+                self.missing_target_prompt = first_missing_target_prompt(&self.config);
+            }
+        }
+    }
+
+    fn create_job_target_folder(&mut self, index: usize) {
+        let Some(job) = self.config.jobs.get(index) else {
+            return;
+        };
+
+        let target = PathBuf::from(job.target.trim());
+        if target.as_os_str().is_empty() {
+            self.status = "The local target is blank. Choose a folder first.".to_string();
+            return;
+        }
+        if !target.is_absolute() {
+            self.status = "The local target must be an absolute path.".to_string();
+            return;
+        }
+
+        match fs::create_dir_all(&target) {
+            Ok(()) => {
+                self.status = format!("Created local target {}", target.display());
+                if index == 0 {
+                    self.missing_target_prompt = first_missing_target_prompt(&self.config);
+                }
+            }
+            Err(error) => {
+                self.status = format!("Failed to create {}: {error}", target.display());
+            }
         }
     }
 
@@ -312,6 +352,10 @@ impl WizardApp {
 
 impl eframe::App for WizardApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        let mut browse_missing_target = None;
+        let mut create_missing_target = None;
+        let mut dismiss_missing_target = false;
+
         egui::TopBottomPanel::top("actions").show(ctx, |ui| {
             ui.horizontal(|ui| {
                 if ui.button("Save").clicked() {
@@ -342,6 +386,34 @@ impl eframe::App for WizardApp {
                 ui.label(&self.status);
             });
         });
+
+        if let Some(prompt) = self.missing_target_prompt.as_ref() {
+            egui::Window::new("Local target folder missing")
+                .collapsible(false)
+                .resizable(false)
+                .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                .show(ctx, |ui| {
+                    ui.label(format!(
+                        "Job {} points to a local target that does not exist yet:",
+                        prompt.job_index + 1
+                    ));
+                    ui.monospace(prompt.target_path.display().to_string());
+                    ui.add_space(8.0);
+                    ui.label("Choose an existing folder, create this one now, or dismiss and handle it later.");
+                    ui.add_space(8.0);
+                    ui.horizontal(|ui| {
+                        if ui.button("Browse").clicked() {
+                            browse_missing_target = Some(prompt.job_index);
+                        }
+                        if ui.button("Create folder").clicked() {
+                            create_missing_target = Some(prompt.job_index);
+                        }
+                        if ui.button("Dismiss").clicked() {
+                            dismiss_missing_target = true;
+                        }
+                    });
+                });
+        }
 
         egui::CentralPanel::default().show(ctx, |ui| {
             if let Some(banner) = self.banner_text() {
@@ -464,7 +536,30 @@ impl eframe::App for WizardApp {
                 }
             });
         });
+
+        if let Some(index) = browse_missing_target {
+            self.browse_job_target(index);
+        }
+        if let Some(index) = create_missing_target {
+            self.create_job_target_folder(index);
+        }
+        if dismiss_missing_target {
+            self.missing_target_prompt = None;
+        }
     }
+}
+
+fn first_missing_target_prompt(config: &AppConfig) -> Option<MissingTargetPrompt> {
+    let first_job = config.jobs.first()?;
+    let target_path = PathBuf::from(first_job.target.trim());
+    if target_path.as_os_str().is_empty() || target_path.exists() || !target_path.is_absolute() {
+        return None;
+    }
+
+    Some(MissingTargetPrompt {
+        job_index: 0,
+        target_path,
+    })
 }
 
 fn normalize_optional_string(value: &mut Option<String>) {
@@ -524,5 +619,38 @@ mod tests {
         let mut value = Some("  C:\\cache  ".to_string());
         normalize_optional_string(&mut value);
         assert_eq!(value, Some("C:\\cache".to_string()));
+    }
+
+    #[test]
+    fn first_missing_target_prompt_detects_missing_first_job_target() {
+        let temp = tempfile::tempdir().unwrap();
+        let config = AppConfig {
+            jobs: vec![JobConfig {
+                name: "Documents".to_string(),
+                source: "Backups/Documents".to_string(),
+                target: temp.path().join("missing-target").display().to_string(),
+                mirror_deletes: true,
+            }],
+            ..AppConfig::default()
+        };
+
+        let prompt = first_missing_target_prompt(&config).unwrap();
+        assert_eq!(prompt.job_index, 0);
+    }
+
+    #[test]
+    fn first_missing_target_prompt_ignores_existing_target() {
+        let existing = tempfile::tempdir().unwrap();
+        let config = AppConfig {
+            jobs: vec![JobConfig {
+                name: "Documents".to_string(),
+                source: "Backups/Documents".to_string(),
+                target: existing.path().display().to_string(),
+                mirror_deletes: true,
+            }],
+            ..AppConfig::default()
+        };
+
+        assert!(first_missing_target_prompt(&config).is_none());
     }
 }
