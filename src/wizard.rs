@@ -1,6 +1,6 @@
 use std::env;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -141,14 +141,24 @@ struct WizardApp {
     context: WizardLaunchContext,
     config: AppConfig,
     status: String,
-    close_after_save: bool,
     missing_target_prompt: Option<MissingTargetPrompt>,
+    current_step: WizardStep,
+    theme_applied: Option<egui::Theme>,
 }
 
 #[derive(Debug, Clone)]
 struct MissingTargetPrompt {
     job_index: usize,
     target_path: PathBuf,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WizardStep {
+    Welcome,
+    Drive,
+    SyncBehavior,
+    Jobs,
+    Review,
 }
 
 impl WizardApp {
@@ -163,9 +173,10 @@ impl WizardApp {
             paths,
             context,
             config,
-            status: "Edit settings, then save the config.".to_string(),
-            close_after_save: false,
+            status: "Use the steps below to set up ShadowSync.".to_string(),
             missing_target_prompt,
+            current_step: WizardStep::Welcome,
+            theme_applied: None,
         }
     }
 
@@ -352,40 +363,49 @@ impl WizardApp {
 
 impl eframe::App for WizardApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.apply_system_theme(ctx);
+
         let mut browse_missing_target = None;
         let mut create_missing_target = None;
         let mut dismiss_missing_target = false;
 
-        egui::TopBottomPanel::top("actions").show(ctx, |ui| {
-            ui.horizontal(|ui| {
-                if ui.button("Save").clicked() {
-                    match self.validate_and_save() {
-                        Ok(()) => {
-                            self.status = format!("Saved {}", self.paths.config_file.display());
-                            if self.close_after_save {
-                                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-                            }
+        egui::TopBottomPanel::top("wizard_header")
+            .frame(egui::Frame::default().inner_margin(egui::Margin::same(14)))
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    ui.heading("ShadowSync Setup");
+                    ui.separator();
+                    ui.label(self.status.clone());
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.button("Close").clicked() {
+                            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                         }
-                        Err(error) => self.status = format!("Save failed: {error}"),
-                    }
-                }
-                if ui.button("Save and Close").clicked() {
-                    self.close_after_save = true;
-                    match self.validate_and_save() {
-                        Ok(()) => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
-                        Err(error) => {
-                            self.close_after_save = false;
-                            self.status = format!("Save failed: {error}");
-                        }
-                    }
-                }
-                if ui.button("Close").clicked() {
-                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-                }
-                ui.separator();
-                ui.label(&self.status);
+                    });
+                });
+                ui.add_space(8.0);
+                self.render_stepper(ui);
             });
-        });
+
+        egui::TopBottomPanel::bottom("wizard_footer")
+            .frame(egui::Frame::default().inner_margin(egui::Margin::same(14)))
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    let at_first = self.step_index() == 0;
+                    let at_last = self.current_step == WizardStep::Review;
+                    if ui.add_enabled(!at_first, egui::Button::new("Back")).clicked() {
+                        self.go_back();
+                    }
+                    if ui.add_enabled(!at_last, egui::Button::new("Next")).clicked() {
+                        self.go_next();
+                    }
+                    ui.separator();
+                    ui.small(format!(
+                        "Step {} of {}",
+                        self.step_index() + 1,
+                        Self::step_sequence().len()
+                    ));
+                });
+            });
 
         if let Some(prompt) = self.missing_target_prompt.as_ref() {
             egui::Window::new("Local target folder missing")
@@ -417,14 +437,217 @@ impl eframe::App for WizardApp {
 
         egui::CentralPanel::default().show(ctx, |ui| {
             if let Some(banner) = self.banner_text() {
-                ui.group(|ui| {
-                    ui.colored_label(egui::Color32::from_rgb(196, 95, 73), banner);
-                });
-                ui.add_space(10.0);
+                egui::Frame::group(ui.style())
+                    .inner_margin(egui::Margin::same(16))
+                    .show(ui, |ui| {
+                        ui.colored_label(egui::Color32::from_rgb(196, 95, 73), banner);
+                    });
+                ui.add_space(12.0);
             }
 
-            egui::ScrollArea::vertical().show(ui, |ui| {
-                ui.heading("Drive");
+            self.render_overview_hero(ui);
+            ui.add_space(14.0);
+
+            egui::ScrollArea::vertical().show(ui, |ui| match self.current_step {
+                WizardStep::Welcome => self.render_welcome_step(ui),
+                WizardStep::Drive => self.render_drive_step(ui),
+                WizardStep::SyncBehavior => self.render_behavior_step(ui),
+                WizardStep::Jobs => self.render_jobs_step(ui),
+                WizardStep::Review => self.render_review_step(ui, ctx),
+            });
+        });
+
+        if let Some(index) = browse_missing_target {
+            self.browse_job_target(index);
+        }
+        if let Some(index) = create_missing_target {
+            self.create_job_target_folder(index);
+        }
+        if dismiss_missing_target {
+            self.missing_target_prompt = None;
+        }
+    }
+}
+
+impl WizardApp {
+    fn apply_system_theme(&mut self, ctx: &egui::Context) {
+        let Some(theme) = ctx.system_theme() else {
+            return;
+        };
+        if self.theme_applied == Some(theme) {
+            return;
+        }
+
+        let mut visuals = match theme {
+            egui::Theme::Dark => egui::Visuals::dark(),
+            egui::Theme::Light => egui::Visuals::light(),
+        };
+        visuals.window_corner_radius = egui::CornerRadius::same(14);
+        visuals.menu_corner_radius = egui::CornerRadius::same(12);
+        visuals.widgets.noninteractive.corner_radius = egui::CornerRadius::same(10);
+        visuals.widgets.inactive.corner_radius = egui::CornerRadius::same(10);
+        visuals.widgets.hovered.corner_radius = egui::CornerRadius::same(10);
+        visuals.widgets.active.corner_radius = egui::CornerRadius::same(10);
+        visuals.widgets.open.corner_radius = egui::CornerRadius::same(10);
+        visuals.panel_fill = if matches!(theme, egui::Theme::Dark) {
+            egui::Color32::from_rgb(20, 23, 28)
+        } else {
+            egui::Color32::from_rgb(245, 248, 252)
+        };
+        visuals.extreme_bg_color = if matches!(theme, egui::Theme::Dark) {
+            egui::Color32::from_rgb(12, 15, 19)
+        } else {
+            egui::Color32::from_rgb(255, 255, 255)
+        };
+
+        ctx.set_visuals(visuals);
+
+        let mut style = (*ctx.style()).clone();
+        style.spacing.item_spacing = egui::vec2(10.0, 10.0);
+        style.spacing.button_padding = egui::vec2(12.0, 8.0);
+        style.spacing.indent = 16.0;
+        ctx.set_style(style);
+
+        self.theme_applied = Some(theme);
+    }
+
+    fn step_sequence() -> &'static [WizardStep] {
+        const STEPS: [WizardStep; 5] = [
+            WizardStep::Welcome,
+            WizardStep::Drive,
+            WizardStep::SyncBehavior,
+            WizardStep::Jobs,
+            WizardStep::Review,
+        ];
+        &STEPS
+    }
+
+    fn step_index(&self) -> usize {
+        Self::step_sequence()
+            .iter()
+            .position(|step| *step == self.current_step)
+            .unwrap_or(0)
+    }
+
+    fn step_title(step: WizardStep) -> &'static str {
+        match step {
+            WizardStep::Welcome => "Get Started",
+            WizardStep::Drive => "Drive",
+            WizardStep::SyncBehavior => "Behavior",
+            WizardStep::Jobs => "Folders",
+            WizardStep::Review => "Review",
+        }
+    }
+
+    fn step_description(step: WizardStep) -> &'static str {
+        match step {
+            WizardStep::Welcome => "Confirm how ShadowSync works before saving anything.",
+            WizardStep::Drive => "Tell ShadowSync which USB drive or mount path to watch.",
+            WizardStep::SyncBehavior => "Choose how often it watches, syncs, and clears cache data.",
+            WizardStep::Jobs => "Point each USB source folder at the local folder you actually use.",
+            WizardStep::Review => "Review the effective paths, then save the config.",
+        }
+    }
+
+    fn go_next(&mut self) {
+        let index = self.step_index();
+        if let Some(step) = Self::step_sequence().get(index + 1).copied() {
+            self.current_step = step;
+        }
+    }
+
+    fn go_back(&mut self) {
+        let index = self.step_index();
+        if index > 0 {
+            self.current_step = Self::step_sequence()[index - 1];
+        }
+    }
+
+    fn drive_summary(&self) -> String {
+        let mut parts = Vec::new();
+        if let Some(letter) = self.config.drive.letter.as_deref().map(str::trim).filter(|v| !v.is_empty()) {
+            parts.push(format!("letter {}", letter.trim_end_matches(':')));
+        }
+        if let Some(path) = self.config.drive.path.as_deref().map(str::trim).filter(|v| !v.is_empty()) {
+            parts.push(format!("mount {}", path));
+        }
+        if parts.is_empty() {
+            "No drive configured yet".to_string()
+        } else {
+            parts.join(" | ")
+        }
+    }
+
+    fn render_stepper(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal_wrapped(|ui| {
+            for (index, step) in Self::step_sequence().iter().copied().enumerate() {
+                let selected = step == self.current_step;
+                let label = format!("{}. {}", index + 1, Self::step_title(step));
+                let response = ui.selectable_label(selected, label);
+                if response.clicked() {
+                    self.current_step = step;
+                }
+            }
+        });
+    }
+
+    fn render_overview_hero(&self, ui: &mut egui::Ui) {
+        egui::Frame::group(ui.style())
+            .inner_margin(egui::Margin::same(16))
+            .show(ui, |ui| {
+                ui.heading(Self::step_title(self.current_step));
+                ui.label(Self::step_description(self.current_step));
+                ui.add_space(6.0);
+                ui.small(format!(
+                    "Drive: {}    |    Shadow cache: {}",
+                    self.drive_summary(),
+                    self.effective_shadow_cache_root().display()
+                ));
+            });
+    }
+
+    fn render_path_badge(ui: &mut egui::Ui, path: &Path) {
+        let (text, color) = if path.exists() {
+            ("Exists", egui::Color32::from_rgb(75, 163, 113))
+        } else {
+            ("Missing", egui::Color32::from_rgb(196, 95, 73))
+        };
+        ui.colored_label(color, text);
+    }
+
+    fn render_welcome_step(&self, ui: &mut egui::Ui) {
+        egui::Frame::group(ui.style())
+            .inner_margin(egui::Margin::same(18))
+            .show(ui, |ui| {
+                ui.heading("Get started");
+                ui.label("ShadowSync normally pulls from the USB into the shadow cache and then into the local folder you work from.");
+                ui.add_space(8.0);
+                ui.label("Typical flow:");
+                ui.monospace("USB drive  ->  shadow cache  ->  local folder");
+                ui.add_space(10.0);
+                ui.label("If you enable push-back later, the same cache is reused in the opposite direction.");
+            });
+
+        ui.add_space(12.0);
+
+        egui::Frame::group(ui.style())
+            .inner_margin(egui::Margin::same(18))
+            .show(ui, |ui| {
+                ui.strong("What this setup covers");
+                ui.label("1. Pick the USB drive or mount path.");
+                ui.label("2. Confirm how often ShadowSync should react.");
+                ui.label("3. Point a USB folder at a local target folder.");
+                ui.label("4. Review the effective paths before saving.");
+            });
+    }
+
+    fn render_drive_step(&mut self, ui: &mut egui::Ui) {
+        egui::Frame::group(ui.style())
+            .inner_margin(egui::Margin::same(18))
+            .show(ui, |ui| {
+                ui.strong("USB drive");
+                ui.label("On Windows you can use a drive letter. On macOS and Linux use the mounted path.");
+                ui.add_space(8.0);
                 ui.horizontal(|ui| {
                     ui.label("Windows letter");
                     let letter = self.config.drive.letter.get_or_insert_default();
@@ -437,9 +660,14 @@ impl eframe::App for WizardApp {
                     }
                 });
                 ui.checkbox(&mut self.config.drive.eject_after_sync, "Eject after sync");
+            });
+    }
 
-                ui.separator();
-                ui.heading("Behavior");
+    fn render_behavior_step(&mut self, ui: &mut egui::Ui) {
+        egui::Frame::group(ui.style())
+            .inner_margin(egui::Margin::same(18))
+            .show(ui, |ui| {
+                ui.strong("Behavior");
                 ui.checkbox(&mut self.config.app.sync_on_insert, "Sync on insert");
                 ui.checkbox(
                     &mut self.config.app.sync_while_mounted,
@@ -453,9 +681,14 @@ impl eframe::App for WizardApp {
                     ui.label("Drive/config poll seconds");
                     ui.add(egui::DragValue::new(&mut self.config.app.poll_interval_seconds).range(1..=60));
                 });
+            });
 
-                ui.separator();
-                ui.heading("Cache");
+        ui.add_space(12.0);
+
+        egui::Frame::group(ui.style())
+            .inner_margin(egui::Margin::same(18))
+            .show(ui, |ui| {
+                ui.strong("Shadow cache");
                 ui.checkbox(&mut self.config.cache.shadow_copy, "Enable shadow cache");
                 ui.checkbox(
                     &mut self.config.cache.clear_shadow_on_eject,
@@ -474,78 +707,146 @@ impl eframe::App for WizardApp {
                     self.effective_shadow_cache_root().display()
                 ));
                 ui.small("Leave custom cache root blank to use the default app cache folder.");
+            });
 
-                ui.separator();
-                ui.heading("Comparison");
+        ui.add_space(12.0);
+
+        egui::Frame::group(ui.style())
+            .inner_margin(egui::Margin::same(18))
+            .show(ui, |ui| {
+                ui.strong("Comparison");
                 ui.checkbox(
                     &mut self.config.compare.hash_on_metadata_change,
                     "Hash files when metadata changes",
                 );
+            });
+    }
 
-                ui.separator();
+    fn render_jobs_step(&mut self, ui: &mut egui::Ui) {
+        egui::Frame::group(ui.style())
+            .inner_margin(egui::Margin::same(18))
+            .show(ui, |ui| {
                 ui.horizontal(|ui| {
-                    ui.heading("Jobs");
+                    ui.strong("Folder jobs");
                     if ui.button("Add job").clicked() {
                         self.config.jobs.push(JobConfig::default());
                     }
                 });
-
-                let mut remove_index = None;
-                let mut browse_source_index = None;
-                let mut browse_target_index = None;
-                for index in 0..self.config.jobs.len() {
-                    let job = &mut self.config.jobs[index];
-                    ui.group(|ui| {
-                        ui.horizontal(|ui| {
-                            ui.strong(format!("Job {}", index + 1));
-                            if ui.button("Remove").clicked() {
-                                remove_index = Some(index);
-                            }
-                        });
-                        ui.horizontal(|ui| {
-                            ui.label("Name");
-                            ui.text_edit_singleline(&mut job.name);
-                        });
-                        ui.horizontal(|ui| {
-                            ui.label("USB source (relative)");
-                            ui.text_edit_singleline(&mut job.source);
-                            if ui.button("Browse").clicked() {
-                                browse_source_index = Some(index);
-                            }
-                        });
-                        ui.horizontal(|ui| {
-                            ui.label("Local target");
-                            ui.text_edit_singleline(&mut job.target);
-                            if ui.button("Browse").clicked() {
-                                browse_target_index = Some(index);
-                            }
-                        });
-                        ui.checkbox(&mut job.mirror_deletes, "Mirror deletes");
-                    });
-                    ui.add_space(8.0);
-                }
-
-                if let Some(index) = remove_index {
-                    self.config.jobs.remove(index);
-                }
-                if let Some(index) = browse_source_index {
-                    self.browse_job_source(index);
-                }
-                if let Some(index) = browse_target_index {
-                    self.browse_job_target(index);
-                }
+                ui.label("Each job maps a folder on the USB drive to a real local folder on this machine.");
             });
-        });
 
-        if let Some(index) = browse_missing_target {
+        ui.add_space(12.0);
+
+        let mut remove_index = None;
+        let mut browse_source_index = None;
+        let mut browse_target_index = None;
+        for index in 0..self.config.jobs.len() {
+            let job = &mut self.config.jobs[index];
+            egui::Frame::group(ui.style())
+                .inner_margin(egui::Margin::same(18))
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.strong(format!("Job {}", index + 1));
+                        if ui.button("Remove").clicked() {
+                            remove_index = Some(index);
+                        }
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label("Name");
+                        ui.text_edit_singleline(&mut job.name);
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label("USB source (relative)");
+                        ui.text_edit_singleline(&mut job.source);
+                        if ui.button("Browse").clicked() {
+                            browse_source_index = Some(index);
+                        }
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label("Local target");
+                        ui.text_edit_singleline(&mut job.target);
+                        if ui.button("Browse").clicked() {
+                            browse_target_index = Some(index);
+                        }
+                    });
+                    ui.horizontal(|ui| {
+                        let target_path = PathBuf::from(job.target.trim());
+                        ui.small("Target folder:");
+                        if !target_path.as_os_str().is_empty() && target_path.is_absolute() {
+                            Self::render_path_badge(ui, &target_path);
+                        } else {
+                            ui.colored_label(egui::Color32::from_rgb(196, 95, 73), "Needs valid path");
+                        }
+                    });
+                    ui.checkbox(&mut job.mirror_deletes, "Mirror deletes");
+                });
+            ui.add_space(8.0);
+        }
+
+        if let Some(index) = remove_index {
+            self.config.jobs.remove(index);
+            self.missing_target_prompt = first_missing_target_prompt(&self.config);
+        }
+        if let Some(index) = browse_source_index {
+            self.browse_job_source(index);
+        }
+        if let Some(index) = browse_target_index {
             self.browse_job_target(index);
         }
-        if let Some(index) = create_missing_target {
-            self.create_job_target_folder(index);
+    }
+
+    fn render_review_step(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        egui::Frame::group(ui.style())
+            .inner_margin(egui::Margin::same(18))
+            .show(ui, |ui| {
+                ui.strong("Review");
+                ui.label("Save this configuration once the paths below look correct.");
+                ui.add_space(8.0);
+                ui.label(format!("Drive: {}", self.drive_summary()));
+                ui.label(format!(
+                    "Shadow cache: {}",
+                    self.effective_shadow_cache_root().display()
+                ));
+                ui.label(format!("Jobs: {}", self.config.jobs.len()));
+            });
+
+        ui.add_space(12.0);
+
+        for (index, job) in self.config.jobs.iter().enumerate() {
+            egui::Frame::group(ui.style())
+                .inner_margin(egui::Margin::same(18))
+                .show(ui, |ui| {
+                    ui.strong(format!("Job {}: {}", index + 1, job.name.trim()));
+                    ui.label(format!("USB source: {}", job.source.trim()));
+                    ui.label(format!("Local target: {}", job.target.trim()));
+                    let target = PathBuf::from(job.target.trim());
+                    if !target.as_os_str().is_empty() && target.is_absolute() {
+                        ui.horizontal(|ui| {
+                            ui.small("Local target status:");
+                            Self::render_path_badge(ui, &target);
+                        });
+                    }
+                });
+            ui.add_space(8.0);
         }
-        if dismiss_missing_target {
-            self.missing_target_prompt = None;
-        }
+
+        ui.add_space(8.0);
+        ui.horizontal(|ui| {
+            if ui.button("Save").clicked() {
+                match self.validate_and_save() {
+                    Ok(()) => {
+                        self.status = format!("Saved {}", self.paths.config_file.display());
+                    }
+                    Err(error) => self.status = format!("Save failed: {error}"),
+                }
+            }
+            if ui.button("Save and Close").clicked() {
+                match self.validate_and_save() {
+                    Ok(()) => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
+                    Err(error) => self.status = format!("Save failed: {error}"),
+                }
+            }
+        });
     }
 }
 
