@@ -542,9 +542,9 @@ impl WizardApp {
     fn step_description(step: WizardStep) -> &'static str {
         match step {
             WizardStep::Welcome => "Confirm how ShadowSync works before saving anything.",
-            WizardStep::Drive => "Tell ShadowSync which USB drive or mount path to watch.",
+            WizardStep::Drive => "Choose the USB root location ShadowSync should mirror from.",
             WizardStep::SyncBehavior => "Choose how often it watches, syncs, and clears cache data.",
-            WizardStep::Jobs => "Point each USB source folder at the local folder you actually use.",
+            WizardStep::Jobs => "Point each folder inside that USB root at the local folder you actually use.",
             WizardStep::Review => "Review the effective paths, then save the config.",
         }
     }
@@ -565,14 +565,21 @@ impl WizardApp {
 
     fn drive_summary(&self) -> String {
         let mut parts = Vec::new();
-        if let Some(letter) = self.config.drive.letter.as_deref().map(str::trim).filter(|v| !v.is_empty()) {
-            parts.push(format!("letter {}", letter.trim_end_matches(':')));
+        if let Some(root) = self.current_drive_root() {
+            parts.push(format!("root {}", root.display()));
         }
-        if let Some(path) = self.config.drive.path.as_deref().map(str::trim).filter(|v| !v.is_empty()) {
-            parts.push(format!("mount {}", path));
+        if let Some(letter) = self
+            .config
+            .drive
+            .letter
+            .as_deref()
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+        {
+            parts.push(format!("watch letter {}", letter.trim_end_matches(':')));
         }
         if parts.is_empty() {
-            "No drive configured yet".to_string()
+            "No USB root configured yet".to_string()
         } else {
             parts.join(" | ")
         }
@@ -634,9 +641,9 @@ impl WizardApp {
             .inner_margin(egui::Margin::same(18))
             .show(ui, |ui| {
                 ui.strong("What this setup covers");
-                ui.label("1. Pick the USB drive or mount path.");
+                ui.label("1. Pick the USB root location, either the whole drive or one folder on it.");
                 ui.label("2. Confirm how often ShadowSync should react.");
-                ui.label("3. Point a USB folder at a local target folder.");
+                ui.label("3. Point a folder inside that USB root at a local target folder.");
                 ui.label("4. Review the effective paths before saving.");
             });
     }
@@ -645,20 +652,26 @@ impl WizardApp {
         egui::Frame::group(ui.style())
             .inner_margin(egui::Margin::same(18))
             .show(ui, |ui| {
-                ui.strong("USB drive");
-                ui.label("On Windows you can use a drive letter. On macOS and Linux use the mounted path.");
+                ui.strong("USB root location");
+                ui.label("Pick the top-level USB location ShadowSync should mirror from.");
+                ui.label("Use the whole drive like `S:\\` or one folder on the drive like `S:\\Backups`. Job sources below will be relative to this root.");
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
-                    ui.label("Windows letter");
-                    let letter = self.config.drive.letter.get_or_insert_default();
-                    ui.text_edit_singleline(letter);
-                    ui.label("Mount path");
                     let path = self.config.drive.path.get_or_insert_default();
+                    ui.label("USB root folder or drive path");
                     ui.text_edit_singleline(path);
                     if ui.button("Browse").clicked() {
                         self.browse_mount_path();
                     }
                 });
+                ui.small("Examples: `S:\\`, `S:\\SCPD MVA`, `/Volumes/USB`, `/media/user/USB/Backups`");
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    ui.label("Windows drive letter (optional)");
+                    let letter = self.config.drive.letter.get_or_insert_default();
+                    ui.text_edit_singleline(letter);
+                });
+                ui.small("On Windows, the drive letter helps with detection and eject. The path above still defines the actual USB root ShadowSync mirrors.");
                 ui.checkbox(&mut self.config.drive.eject_after_sync, "Eject after sync");
             });
     }
@@ -732,7 +745,7 @@ impl WizardApp {
                         self.config.jobs.push(JobConfig::default());
                     }
                 });
-                ui.label("Each job maps a folder on the USB drive to a real local folder on this machine.");
+                ui.label("Each job maps a folder inside the USB root above to a real local folder on this machine.");
             });
 
         ui.add_space(12.0);
@@ -756,7 +769,7 @@ impl WizardApp {
                         ui.text_edit_singleline(&mut job.name);
                     });
                     ui.horizontal(|ui| {
-                        ui.label("USB source (relative)");
+                        ui.label("Folder inside USB root");
                         ui.text_edit_singleline(&mut job.source);
                         if ui.button("Browse").clicked() {
                             browse_source_index = Some(index);
@@ -802,7 +815,7 @@ impl WizardApp {
                 ui.strong("Review");
                 ui.label("Save this configuration once the paths below look correct.");
                 ui.add_space(8.0);
-                ui.label(format!("Drive: {}", self.drive_summary()));
+                ui.label(format!("USB root: {}", self.drive_summary()));
                 ui.label(format!(
                     "Shadow cache: {}",
                     self.effective_shadow_cache_root().display()
@@ -817,7 +830,7 @@ impl WizardApp {
                 .inner_margin(egui::Margin::same(18))
                 .show(ui, |ui| {
                     ui.strong(format!("Job {}: {}", index + 1, job.name.trim()));
-                    ui.label(format!("USB source: {}", job.source.trim()));
+                    ui.label(format!("Folder inside USB root: {}", job.source.trim()));
                     ui.label(format!("Local target: {}", job.target.trim()));
                     let target = PathBuf::from(job.target.trim());
                     if !target.as_os_str().is_empty() && target.is_absolute() {
