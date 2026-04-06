@@ -1,3 +1,5 @@
 [alias]
 wizard = "run -- --wizard"
 wizard-release = "run --release -- --wizard"
+watch-wizard = ["watch", "-q", "-x", "run -- --wizard"]
+watch-tests = ["watch", "-q", "-x", "test --locked"]

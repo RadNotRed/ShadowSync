@@ -28,6 +28,7 @@ fn main() {
 fn generate_release_assets() -> Result<(), Box<dyn Error>> {
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR")?);
     let target = env::var("TARGET")?;
+    let out_dir = PathBuf::from(env::var("OUT_DIR")?);
     let svg_path = manifest_dir.join(".github").join("assets").join("icon.svg");
     let output_dir = manifest_dir
         .join("target")
@@ -44,6 +45,10 @@ fn generate_release_assets() -> Result<(), Box<dyn Error>> {
         let rgba = render_svg(&tree, side, size.width(), size.height())?;
         let png_path = output_dir.join(format!("icon_{side}x{side}.png"));
         write_png(&png_path, side, side, &rgba)?;
+        if side == 256 {
+            let runtime_icon_path = out_dir.join("wizard_icon_256.png");
+            write_png(&runtime_icon_path, side, side, &rgba)?;
+        }
     }
 
     Ok(())

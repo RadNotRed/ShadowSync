@@ -69,6 +69,21 @@ For a release-mode UI run:
 cargo wizard-release
 ```
 
+For the closest thing to a native Rust "dev server" for the wizard, use `cargo-watch` so the UI rebuilds and relaunches on every save:
+
+```powershell
+cargo install cargo-watch
+cargo watch-wizard
+```
+
+To keep tests running while you edit:
+
+```powershell
+cargo watch-tests
+```
+
+These aliases are development-only helpers from [.cargo/config.toml](.cargo/config.toml). They do not add runtime or release bloat.
+
 For docs previews:
 
 ```powershell

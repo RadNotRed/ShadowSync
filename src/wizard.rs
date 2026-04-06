@@ -13,6 +13,7 @@ use crate::config::{AppConfig, AppPaths, JobConfig, default_config_template, loa
 use crate::platform;
 
 const WIZARD_FLAG: &str = "--wizard";
+const CONTROL_HEIGHT: f32 = 26.0;
 
 #[derive(Debug, Default, Clone)]
 pub struct WizardLaunchContext {
@@ -120,11 +121,17 @@ fn backup_invalid_config(paths: &AppPaths, raw: &str) -> Result<PathBuf> {
 
 fn run_setup_wizard(paths: AppPaths, context: WizardLaunchContext) -> Result<()> {
     let app = WizardApp::load(paths, context);
+    let mut viewport = egui::ViewportBuilder::default()
+        .with_inner_size([1120.0, 760.0])
+        .with_min_inner_size([980.0, 680.0])
+        .with_title("ShadowSync Setup")
+        .with_transparent(false)
+        .with_has_shadow(true);
+    if let Some(icon) = wizard_window_icon() {
+        viewport = viewport.with_icon(icon);
+    }
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
-            .with_inner_size([980.0, 760.0])
-            .with_min_inner_size([860.0, 620.0])
-            .with_title("ShadowSync Setup"),
+        viewport,
         ..Default::default()
     };
 
@@ -134,6 +141,10 @@ fn run_setup_wizard(paths: AppPaths, context: WizardLaunchContext) -> Result<()>
         Box::new(move |_cc| Ok(Box::new(app))),
     )
     .map_err(|error| anyhow::anyhow!("failed to run setup wizard: {error}"))
+}
+
+fn wizard_window_icon() -> Option<egui::IconData> {
+    eframe::icon_data::from_png_bytes(include_bytes!(concat!(env!("OUT_DIR"), "/wizard_icon_256.png"))).ok()
 }
 
 struct WizardApp {
@@ -159,6 +170,18 @@ enum WizardStep {
     SyncBehavior,
     Jobs,
     Review,
+}
+
+#[derive(Clone, Copy)]
+struct WizardPalette {
+    accent: egui::Color32,
+    accent_soft: egui::Color32,
+    surface: egui::Color32,
+    surface_strong: egui::Color32,
+    surface_muted: egui::Color32,
+    stroke: egui::Color32,
+    text_muted: egui::Color32,
+    danger: egui::Color32,
 }
 
 impl WizardApp {
@@ -263,7 +286,7 @@ impl WizardApp {
 
     fn browse_job_source(&mut self, index: usize) {
         let Some(root) = self.current_drive_root() else {
-            self.status = "Set the drive path or letter first, then browse a USB source folder.".to_string();
+            self.status = "Set the USB root location first, then browse a folder inside it.".to_string();
             return;
         };
 
@@ -364,30 +387,55 @@ impl WizardApp {
 impl eframe::App for WizardApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.apply_system_theme(ctx);
+        let palette = self.palette();
 
         let mut browse_missing_target = None;
         let mut create_missing_target = None;
         let mut dismiss_missing_target = false;
 
         egui::TopBottomPanel::top("wizard_header")
-            .frame(egui::Frame::default().inner_margin(egui::Margin::same(14)))
+            .frame(
+                egui::Frame::new()
+                    .fill(palette.surface)
+                    .stroke(egui::Stroke::new(1.0, palette.stroke))
+                    .inner_margin(egui::Margin::same(18)),
+            )
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
-                    ui.heading("ShadowSync Setup");
-                    ui.separator();
-                    ui.label(self.status.clone());
+                    ui.vertical(|ui| {
+                        ui.label(
+                            egui::RichText::new("SHADOWSYNC")
+                                .size(11.0)
+                                .color(palette.accent)
+                                .strong(),
+                        );
+                        ui.heading("Setup Wizard");
+                    });
+                    ui.add_space(10.0);
+                    self.render_info_pill(ui, "Fast shadow-backed USB sync", false);
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if ui.button("Close").clicked() {
                             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                         }
                     });
                 });
+                ui.add_space(4.0);
+                ui.label(
+                    egui::RichText::new(self.status.clone())
+                        .size(12.0)
+                        .color(palette.text_muted),
+                );
                 ui.add_space(8.0);
                 self.render_stepper(ui);
             });
 
         egui::TopBottomPanel::bottom("wizard_footer")
-            .frame(egui::Frame::default().inner_margin(egui::Margin::same(14)))
+            .frame(
+                egui::Frame::new()
+                    .fill(palette.surface)
+                    .stroke(egui::Stroke::new(1.0, palette.stroke))
+                    .inner_margin(egui::Margin::same(16)),
+            )
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
                     let at_first = self.step_index() == 0;
@@ -435,27 +483,39 @@ impl eframe::App for WizardApp {
                 });
         }
 
-        egui::CentralPanel::default().show(ctx, |ui| {
-            if let Some(banner) = self.banner_text() {
-                egui::Frame::group(ui.style())
-                    .inner_margin(egui::Margin::same(16))
+        egui::CentralPanel::default()
+            .frame(egui::Frame::new().fill(egui::Color32::TRANSPARENT))
+            .show(ctx, |ui| {
+                egui::ScrollArea::vertical()
+                    .auto_shrink([false, false])
                     .show(ui, |ui| {
-                        ui.colored_label(egui::Color32::from_rgb(196, 95, 73), banner);
-                    });
-                ui.add_space(12.0);
-            }
+                    if let Some(banner) = self.banner_text() {
+                        self.card_frame(true)
+                            .inner_margin(egui::Margin::same(18))
+                            .show(ui, |ui| {
+                                ui.label(
+                                    egui::RichText::new("CONFIG RECOVERY")
+                                        .size(11.0)
+                                        .color(palette.danger)
+                                        .strong(),
+                                );
+                                ui.add_space(6.0);
+                                ui.colored_label(palette.danger, banner);
+                            });
+                        ui.add_space(12.0);
+                    }
 
-            self.render_overview_hero(ui);
-            ui.add_space(14.0);
-
-            egui::ScrollArea::vertical().show(ui, |ui| match self.current_step {
-                WizardStep::Welcome => self.render_welcome_step(ui),
-                WizardStep::Drive => self.render_drive_step(ui),
-                WizardStep::SyncBehavior => self.render_behavior_step(ui),
-                WizardStep::Jobs => self.render_jobs_step(ui),
-                WizardStep::Review => self.render_review_step(ui, ctx),
+                    self.render_overview_hero(ui);
+                    ui.add_space(14.0);
+                    match self.current_step {
+                        WizardStep::Welcome => self.render_welcome_step(ui),
+                        WizardStep::Drive => self.render_drive_step(ui),
+                        WizardStep::SyncBehavior => self.render_behavior_step(ui),
+                        WizardStep::Jobs => self.render_jobs_step(ui),
+                        WizardStep::Review => self.render_review_step(ui, ctx),
+                    }
+                });
             });
-        });
 
         if let Some(index) = browse_missing_target {
             self.browse_job_target(index);
@@ -466,6 +526,15 @@ impl eframe::App for WizardApp {
         if dismiss_missing_target {
             self.missing_target_prompt = None;
         }
+    }
+
+    fn clear_color(&self, visuals: &egui::Visuals) -> [f32; 4] {
+        let color = if visuals.dark_mode {
+            egui::Color32::from_rgb(11, 16, 21)
+        } else {
+            egui::Color32::from_rgb(241, 247, 252)
+        };
+        color.to_normalized_gamma_f32()
     }
 }
 
@@ -482,6 +551,11 @@ impl WizardApp {
             egui::Theme::Dark => egui::Visuals::dark(),
             egui::Theme::Light => egui::Visuals::light(),
         };
+        let stroke_color = if matches!(theme, egui::Theme::Dark) {
+            egui::Color32::from_rgb(58, 72, 88)
+        } else {
+            egui::Color32::from_rgb(198, 209, 220)
+        };
         visuals.window_corner_radius = egui::CornerRadius::same(14);
         visuals.menu_corner_radius = egui::CornerRadius::same(12);
         visuals.widgets.noninteractive.corner_radius = egui::CornerRadius::same(10);
@@ -490,25 +564,74 @@ impl WizardApp {
         visuals.widgets.active.corner_radius = egui::CornerRadius::same(10);
         visuals.widgets.open.corner_radius = egui::CornerRadius::same(10);
         visuals.panel_fill = if matches!(theme, egui::Theme::Dark) {
-            egui::Color32::from_rgb(20, 23, 28)
+            egui::Color32::from_rgb(21, 28, 36)
         } else {
-            egui::Color32::from_rgb(245, 248, 252)
+            egui::Color32::from_rgb(247, 250, 253)
         };
         visuals.extreme_bg_color = if matches!(theme, egui::Theme::Dark) {
-            egui::Color32::from_rgb(12, 15, 19)
+            egui::Color32::from_rgb(24, 31, 40)
         } else {
-            egui::Color32::from_rgb(255, 255, 255)
+            egui::Color32::from_rgb(248, 251, 254)
         };
+        visuals.widgets.inactive.bg_fill = if matches!(theme, egui::Theme::Dark) {
+            egui::Color32::from_rgb(29, 38, 49)
+        } else {
+            egui::Color32::from_rgb(248, 251, 254)
+        };
+        visuals.widgets.hovered.bg_fill = if matches!(theme, egui::Theme::Dark) {
+            egui::Color32::from_rgb(34, 43, 54)
+        } else {
+            egui::Color32::from_rgb(252, 254, 255)
+        };
+        visuals.widgets.active.bg_fill = if matches!(theme, egui::Theme::Dark) {
+            egui::Color32::from_rgb(39, 49, 61)
+        } else {
+            egui::Color32::from_rgb(240, 246, 252)
+        };
+        visuals.widgets.open.bg_fill = visuals.widgets.active.bg_fill;
+        visuals.window_stroke = egui::Stroke::new(1.0, stroke_color);
+        visuals.widgets.noninteractive.bg_stroke = egui::Stroke::new(1.0, stroke_color);
+        visuals.widgets.inactive.bg_stroke = egui::Stroke::new(1.0, stroke_color);
+        visuals.widgets.hovered.bg_stroke = egui::Stroke::new(1.0, stroke_color);
+        visuals.widgets.active.bg_stroke = egui::Stroke::new(1.0, stroke_color);
+        visuals.widgets.open.bg_stroke = egui::Stroke::new(1.0, stroke_color);
 
         ctx.set_visuals(visuals);
 
         let mut style = (*ctx.style()).clone();
         style.spacing.item_spacing = egui::vec2(10.0, 10.0);
-        style.spacing.button_padding = egui::vec2(12.0, 8.0);
+        style.spacing.button_padding = egui::vec2(12.0, 5.0);
         style.spacing.indent = 16.0;
+        style.spacing.interact_size = egui::vec2(40.0, 22.0);
+        style.spacing.slider_width = 200.0;
         ctx.set_style(style);
 
         self.theme_applied = Some(theme);
+    }
+
+    fn palette(&self) -> WizardPalette {
+        match self.theme_applied.unwrap_or(egui::Theme::Dark) {
+            egui::Theme::Dark => WizardPalette {
+                accent: egui::Color32::from_rgb(69, 170, 255),
+                accent_soft: egui::Color32::from_rgba_unmultiplied(69, 170, 255, 110),
+                surface: egui::Color32::from_rgb(21, 28, 36),
+                surface_strong: egui::Color32::from_rgb(24, 31, 40),
+                surface_muted: egui::Color32::from_rgb(29, 38, 49),
+                stroke: egui::Color32::from_rgb(58, 72, 88),
+                text_muted: egui::Color32::from_rgb(168, 182, 196),
+                danger: egui::Color32::from_rgb(232, 108, 90),
+            },
+            egui::Theme::Light => WizardPalette {
+                accent: egui::Color32::from_rgb(0, 116, 217),
+                accent_soft: egui::Color32::from_rgba_unmultiplied(0, 116, 217, 90),
+                surface: egui::Color32::from_rgb(248, 251, 254),
+                surface_strong: egui::Color32::from_rgb(252, 254, 255),
+                surface_muted: egui::Color32::from_rgb(242, 246, 250),
+                stroke: egui::Color32::from_rgb(198, 209, 220),
+                text_muted: egui::Color32::from_rgb(88, 103, 118),
+                danger: egui::Color32::from_rgb(201, 79, 61),
+            },
+        }
     }
 
     fn step_sequence() -> &'static [WizardStep] {
@@ -586,11 +709,31 @@ impl WizardApp {
     }
 
     fn render_stepper(&mut self, ui: &mut egui::Ui) {
+        let palette = self.palette();
         ui.horizontal_wrapped(|ui| {
             for (index, step) in Self::step_sequence().iter().copied().enumerate() {
                 let selected = step == self.current_step;
                 let label = format!("{}. {}", index + 1, Self::step_title(step));
-                let response = ui.selectable_label(selected, label);
+                let button = egui::Button::new(
+                    egui::RichText::new(label)
+                        .size(13.0)
+                        .color(if selected {
+                            egui::Color32::WHITE
+                        } else {
+                            ui.visuals().text_color()
+                        }),
+                )
+                .fill(if selected {
+                    palette.accent
+                } else {
+                    palette.surface_muted
+                })
+                .stroke(egui::Stroke::new(
+                    1.0,
+                    if selected { palette.accent_soft } else { palette.stroke },
+                ))
+                .corner_radius(egui::CornerRadius::same(12));
+                let response = ui.add(button);
                 if response.clicked() {
                     self.current_step = step;
                 }
@@ -599,17 +742,45 @@ impl WizardApp {
     }
 
     fn render_overview_hero(&self, ui: &mut egui::Ui) {
-        egui::Frame::group(ui.style())
+        let palette = self.palette();
+        self.card_frame(true)
             .inner_margin(egui::Margin::same(16))
             .show(ui, |ui| {
-                ui.heading(Self::step_title(self.current_step));
-                ui.label(Self::step_description(self.current_step));
-                ui.add_space(6.0);
-                ui.small(format!(
-                    "Drive: {}    |    Shadow cache: {}",
-                    self.drive_summary(),
-                    self.effective_shadow_cache_root().display()
-                ));
+                ui.horizontal(|ui| {
+                    ui.vertical(|ui| {
+                        ui.label(
+                            egui::RichText::new(format!("STEP {}", self.step_index() + 1))
+                                .size(11.0)
+                                .color(palette.accent)
+                                .strong(),
+                        );
+                        ui.heading(Self::step_title(self.current_step));
+                        ui.label(
+                            egui::RichText::new(Self::step_description(self.current_step))
+                                .color(palette.text_muted),
+                        );
+                    });
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
+                        self.render_info_pill(
+                            ui,
+                            &format!("{} jobs", self.config.jobs.len()),
+                            true,
+                        );
+                    });
+                });
+                ui.add_space(10.0);
+                ui.horizontal_wrapped(|ui| {
+                    self.render_info_pill(
+                        ui,
+                        &format!("USB {}", self.drive_summary()),
+                        false,
+                    );
+                    self.render_info_pill(
+                        ui,
+                        &format!("Cache {}", self.effective_shadow_cache_root().display()),
+                        false,
+                    );
+                });
             });
     }
 
@@ -622,64 +793,184 @@ impl WizardApp {
         ui.colored_label(color, text);
     }
 
-    fn render_welcome_step(&self, ui: &mut egui::Ui) {
-        egui::Frame::group(ui.style())
+    fn render_card(ui: &mut egui::Ui, title: &str, add_contents: impl FnOnce(&mut egui::Ui)) {
+        let mut frame = egui::Frame::group(ui.style());
+        frame.fill = ui.visuals().widgets.inactive.bg_fill;
+        frame.stroke = egui::Stroke::new(1.0, ui.visuals().widgets.noninteractive.bg_stroke.color);
+        frame
             .inner_margin(egui::Margin::same(18))
             .show(ui, |ui| {
-                ui.heading("Get started");
+                ui.strong(title);
+                ui.add_space(8.0);
+                add_contents(ui);
+            });
+    }
+
+    fn render_text_field_row(ui: &mut egui::Ui, label: &str, value: &mut String) {
+        ui.vertical(|ui| {
+            ui.label(label);
+            ui.add_sized(
+                [ui.available_width().max(180.0), CONTROL_HEIGHT],
+                egui::TextEdit::singleline(value),
+            );
+        });
+    }
+
+    fn render_browse_field_row(ui: &mut egui::Ui, label: &str, value: &mut String) -> bool {
+        let mut clicked = false;
+        ui.vertical(|ui| {
+            ui.label(label);
+            ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                let button_width = 88.0;
+                let field_width = (ui.available_width() - button_width - ui.spacing().item_spacing.x)
+                    .max(180.0);
+                ui.add_sized(
+                    [field_width, CONTROL_HEIGHT],
+                    egui::TextEdit::singleline(value),
+                );
+                clicked = ui
+                    .add_sized([button_width, CONTROL_HEIGHT], egui::Button::new("Browse"))
+                    .clicked();
+            });
+        });
+        clicked
+    }
+
+    fn render_action_button(ui: &mut egui::Ui, label: &str, width: f32) -> egui::Response {
+        ui.add_sized([width, CONTROL_HEIGHT], egui::Button::new(label))
+    }
+
+    fn card_frame(&self, emphasis: bool) -> egui::Frame {
+        let palette = self.palette();
+        egui::Frame::new()
+            .fill(if emphasis {
+                palette.surface_strong
+            } else {
+                palette.surface
+            })
+            .stroke(egui::Stroke::new(
+                1.0,
+                if emphasis {
+                    palette.accent_soft
+                } else {
+                    palette.stroke
+                },
+            ))
+            .corner_radius(egui::CornerRadius::same(18))
+            .shadow(egui::epaint::Shadow {
+                offset: [0, 10],
+                blur: 28,
+                spread: 0,
+                color: egui::Color32::from_rgba_unmultiplied(0, 0, 0, 52),
+            })
+    }
+
+    fn render_info_pill(&self, ui: &mut egui::Ui, text: &str, accent: bool) {
+        let palette = self.palette();
+        let fill = if accent {
+            palette.accent
+        } else {
+            palette.surface_muted
+        };
+        let text_color = if accent {
+            egui::Color32::WHITE
+        } else {
+            ui.visuals().text_color()
+        };
+        egui::Frame::new()
+            .fill(fill)
+            .stroke(egui::Stroke::new(1.0, palette.stroke))
+            .corner_radius(egui::CornerRadius::same(255))
+            .inner_margin(egui::Margin::symmetric(10, 6))
+            .show(ui, |ui| {
+                ui.label(egui::RichText::new(text).size(12.0).color(text_color));
+            });
+    }
+
+    fn render_welcome_step(&self, ui: &mut egui::Ui) {
+        ui.columns(2, |columns| {
+            self.card_frame(true)
+                .inner_margin(egui::Margin::same(20))
+                .show(&mut columns[0], |ui| {
                 ui.label("ShadowSync normally pulls from the USB into the shadow cache and then into the local folder you work from.");
                 ui.add_space(8.0);
                 ui.label("Typical flow:");
-                ui.monospace("USB drive  ->  shadow cache  ->  local folder");
+                ui.monospace("USB root  ->  shadow cache  ->  local folder");
                 ui.add_space(10.0);
                 ui.label("If you enable push-back later, the same cache is reused in the opposite direction.");
             });
-
-        ui.add_space(12.0);
-
-        egui::Frame::group(ui.style())
-            .inner_margin(egui::Margin::same(18))
-            .show(ui, |ui| {
+            columns[0].add_space(12.0);
+            self.card_frame(false)
+                .inner_margin(egui::Margin::same(18))
+                .show(&mut columns[0], |ui| {
                 ui.strong("What this setup covers");
+                ui.add_space(8.0);
                 ui.label("1. Pick the USB root location, either the whole drive or one folder on it.");
                 ui.label("2. Confirm how often ShadowSync should react.");
                 ui.label("3. Point a folder inside that USB root at a local target folder.");
                 ui.label("4. Review the effective paths before saving.");
             });
+
+            self.card_frame(false)
+                .inner_margin(egui::Margin::same(18))
+                .show(&mut columns[1], |ui| {
+                ui.strong("Recommended defaults");
+                ui.add_space(8.0);
+                ui.label("Keep shadow cache enabled so local file locks do not block sync runs.");
+                ui.label("Leave custom cache root blank unless you want it somewhere specific.");
+                ui.label("Start with manual push-back disabled until you trust the workflow.");
+            });
+            columns[1].add_space(12.0);
+            self.card_frame(false)
+                .inner_margin(egui::Margin::same(18))
+                .show(&mut columns[1], |ui| {
+                ui.strong("What you will end up with");
+                ui.add_space(8.0);
+                ui.label("A USB root location to monitor.");
+                ui.label("One or more folder mappings into local working folders.");
+                ui.label("A reusable shadow cache that speeds up repeated sync runs.");
+            });
+        });
     }
 
     fn render_drive_step(&mut self, ui: &mut egui::Ui) {
-        egui::Frame::group(ui.style())
-            .inner_margin(egui::Margin::same(18))
-            .show(ui, |ui| {
+        ui.columns(2, |columns| {
+            Self::render_card(&mut columns[0], "USB root location", |ui| {
                 ui.strong("USB root location");
                 ui.label("Pick the top-level USB location ShadowSync should mirror from.");
-                ui.label("Use the whole drive like `S:\\` or one folder on the drive like `S:\\Backups`. Job sources below will be relative to this root.");
+                ui.label("Use the whole drive like `S:\\` or one folder on the drive like `S:\\SyncRoot`. Job sources below will be relative to this root.");
                 ui.add_space(8.0);
-                ui.horizontal(|ui| {
-                    let path = self.config.drive.path.get_or_insert_default();
-                    ui.label("USB root folder or drive path");
-                    ui.text_edit_singleline(path);
-                    if ui.button("Browse").clicked() {
-                        self.browse_mount_path();
-                    }
-                });
-                ui.small("Examples: `S:\\`, `S:\\SCPD MVA`, `/Volumes/USB`, `/media/user/USB/Backups`");
+                let path = self.config.drive.path.get_or_insert_default();
+                if Self::render_browse_field_row(ui, "USB root folder or drive path", path) {
+                    self.browse_mount_path();
+                }
+                ui.small("Examples: `S:\\`, `S:\\SyncRoot`, `/Volumes/USBDrive`, `/media/user/USBDrive/SyncRoot`");
                 ui.add_space(8.0);
-                ui.horizontal(|ui| {
-                    ui.label("Windows drive letter (optional)");
-                    let letter = self.config.drive.letter.get_or_insert_default();
-                    ui.text_edit_singleline(letter);
-                });
+                let letter = self.config.drive.letter.get_or_insert_default();
+                Self::render_text_field_row(ui, "Windows drive letter (optional)", letter);
                 ui.small("On Windows, the drive letter helps with detection and eject. The path above still defines the actual USB root ShadowSync mirrors.");
                 ui.checkbox(&mut self.config.drive.eject_after_sync, "Eject after sync");
             });
+
+            Self::render_card(&mut columns[1], "Current resolution", |ui| {
+                ui.label(format!("Effective USB root: {}", self.drive_summary()));
+                ui.add_space(8.0);
+                ui.label("Use one folder if you only want to mirror a single section of the drive.");
+                ui.label("Use the drive root if you want job paths like `SyncRoot\\Documents` or `Media\\Photos` under the same device.");
+            });
+            columns[1].add_space(12.0);
+            Self::render_card(&mut columns[1], "Examples", |ui| {
+                ui.monospace("Whole drive:   S:\\");
+                ui.monospace("One folder:    S:\\SyncRoot");
+                ui.monospace("macOS:         /Volumes/USBDrive");
+                ui.monospace("Linux:         /media/user/USBDrive/SyncRoot");
+            });
+        });
     }
 
     fn render_behavior_step(&mut self, ui: &mut egui::Ui) {
-        egui::Frame::group(ui.style())
-            .inner_margin(egui::Margin::same(18))
-            .show(ui, |ui| {
+        ui.columns(2, |columns| {
+            Self::render_card(&mut columns[0], "Behavior", |ui| {
                 ui.strong("Behavior");
                 ui.checkbox(&mut self.config.app.sync_on_insert, "Sync on insert");
                 ui.checkbox(
@@ -696,25 +987,19 @@ impl WizardApp {
                 });
             });
 
-        ui.add_space(12.0);
+            columns[0].add_space(12.0);
 
-        egui::Frame::group(ui.style())
-            .inner_margin(egui::Margin::same(18))
-            .show(ui, |ui| {
+            Self::render_card(&mut columns[0], "Shadow cache", |ui| {
                 ui.strong("Shadow cache");
                 ui.checkbox(&mut self.config.cache.shadow_copy, "Enable shadow cache");
                 ui.checkbox(
                     &mut self.config.cache.clear_shadow_on_eject,
                     "Clear shadow cache on eject",
                 );
-                ui.horizontal(|ui| {
-                    ui.label("Custom cache root");
-                    let cache_root = self.config.cache.root.get_or_insert_default();
-                    ui.text_edit_singleline(cache_root);
-                    if ui.button("Browse").clicked() {
-                        self.browse_cache_root();
-                    }
-                });
+                let cache_root = self.config.cache.root.get_or_insert_default();
+                if Self::render_browse_field_row(ui, "Custom cache root", cache_root) {
+                    self.browse_cache_root();
+                }
                 ui.small(format!(
                     "Current shadow cache: {}",
                     self.effective_shadow_cache_root().display()
@@ -722,79 +1007,127 @@ impl WizardApp {
                 ui.small("Leave custom cache root blank to use the default app cache folder.");
             });
 
-        ui.add_space(12.0);
+            columns[1].add_space(0.0);
+            Self::render_card(&mut columns[1], "How this behaves", |ui| {
+                ui.label("`Sync on insert` runs an import as soon as the USB root appears.");
+                ui.label("`Watch the mounted drive` keeps checking for changes while the device stays connected.");
+                ui.label("`Auto-push` is separate. Leave it off if you only want to push back manually.");
+            });
+            columns[1].add_space(12.0);
+            Self::render_card(&mut columns[1], "Current effective settings", |ui| {
+                ui.label(format!(
+                    "Poll every {} second(s)",
+                    self.config.app.poll_interval_seconds
+                ));
+                ui.label(format!(
+                    "Shadow cache root: {}",
+                    self.effective_shadow_cache_root().display()
+                ));
+                ui.label(if self.config.cache.shadow_copy {
+                    "Shadow cache is enabled."
+                } else {
+                    "Shadow cache is disabled."
+                });
+            });
+            columns[1].add_space(12.0);
 
-        egui::Frame::group(ui.style())
-            .inner_margin(egui::Margin::same(18))
-            .show(ui, |ui| {
+            Self::render_card(&mut columns[1], "Comparison", |ui| {
                 ui.strong("Comparison");
                 ui.checkbox(
                     &mut self.config.compare.hash_on_metadata_change,
                     "Hash files when metadata changes",
                 );
             });
+        });
     }
 
     fn render_jobs_step(&mut self, ui: &mut egui::Ui) {
-        egui::Frame::group(ui.style())
-            .inner_margin(egui::Margin::same(18))
-            .show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    ui.strong("Folder jobs");
-                    if ui.button("Add job").clicked() {
-                        self.config.jobs.push(JobConfig::default());
-                    }
-                });
-                ui.label("Each job maps a folder inside the USB root above to a real local folder on this machine.");
+        Self::render_card(ui, "Folder jobs", |ui| {
+            ui.horizontal(|ui| {
+                ui.strong("Folder jobs");
+                if Self::render_action_button(ui, "Add job", 96.0).clicked() {
+                    self.config.jobs.push(JobConfig::default());
+                }
             });
+            ui.label("Each job maps a folder inside the USB root above to a real local folder on this machine.");
+        });
 
         ui.add_space(12.0);
 
         let mut remove_index = None;
         let mut browse_source_index = None;
         let mut browse_target_index = None;
+
         for index in 0..self.config.jobs.len() {
             let job = &mut self.config.jobs[index];
             egui::Frame::group(ui.style())
+                .fill(ui.visuals().widgets.inactive.bg_fill)
+                .stroke(egui::Stroke::new(
+                    1.0,
+                    ui.visuals().widgets.noninteractive.bg_stroke.color,
+                ))
                 .inner_margin(egui::Margin::same(18))
                 .show(ui, |ui| {
                     ui.horizontal(|ui| {
                         ui.strong(format!("Job {}", index + 1));
-                        if ui.button("Remove").clicked() {
+                        if Self::render_action_button(ui, "Remove", 96.0).clicked() {
                             remove_index = Some(index);
                         }
                     });
-                    ui.horizontal(|ui| {
-                        ui.label("Name");
-                        ui.text_edit_singleline(&mut job.name);
-                    });
-                    ui.horizontal(|ui| {
-                        ui.label("Folder inside USB root");
-                        ui.text_edit_singleline(&mut job.source);
-                        if ui.button("Browse").clicked() {
-                            browse_source_index = Some(index);
-                        }
-                    });
-                    ui.horizontal(|ui| {
-                        ui.label("Local target");
-                        ui.text_edit_singleline(&mut job.target);
-                        if ui.button("Browse").clicked() {
-                            browse_target_index = Some(index);
-                        }
-                    });
+                    Self::render_text_field_row(ui, "Name", &mut job.name);
+                    if Self::render_browse_field_row(ui, "Folder inside USB root", &mut job.source) {
+                        browse_source_index = Some(index);
+                    }
+                    if Self::render_browse_field_row(ui, "Local target", &mut job.target) {
+                        browse_target_index = Some(index);
+                    }
                     ui.horizontal(|ui| {
                         let target_path = PathBuf::from(job.target.trim());
                         ui.small("Target folder:");
                         if !target_path.as_os_str().is_empty() && target_path.is_absolute() {
                             Self::render_path_badge(ui, &target_path);
                         } else {
-                            ui.colored_label(egui::Color32::from_rgb(196, 95, 73), "Needs valid path");
+                            ui.colored_label(
+                                egui::Color32::from_rgb(196, 95, 73),
+                                "Needs valid path",
+                            );
                         }
                     });
                     ui.checkbox(&mut job.mirror_deletes, "Mirror deletes");
                 });
-            ui.add_space(8.0);
+            ui.add_space(10.0);
         }
+
+        ui.columns(2, |columns| {
+            Self::render_card(&mut columns[0], "Current mapping", |ui| {
+                if self.config.jobs.is_empty() {
+                    ui.label("No jobs yet. Add one above.");
+                } else {
+                    for (index, job) in self.config.jobs.iter().enumerate() {
+                        ui.label(format!(
+                            "{}. {} -> {}",
+                            index + 1,
+                            if job.source.trim().is_empty() {
+                                "<USB folder>"
+                            } else {
+                                job.source.trim()
+                            },
+                            if job.target.trim().is_empty() {
+                                "<local folder>"
+                            } else {
+                                job.target.trim()
+                            }
+                        ));
+                    }
+                }
+            });
+
+            Self::render_card(&mut columns[1], "Job rules", |ui| {
+                ui.label("Job source stays relative to the USB root above.");
+                ui.label("Local target should be an absolute folder on this machine.");
+                ui.label("Mirror deletes only follows the active source side for that sync direction.");
+            });
+        });
 
         if let Some(index) = remove_index {
             self.config.jobs.remove(index);
@@ -809,9 +1142,8 @@ impl WizardApp {
     }
 
     fn render_review_step(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
-        egui::Frame::group(ui.style())
-            .inner_margin(egui::Margin::same(18))
-            .show(ui, |ui| {
+        ui.columns(2, |columns| {
+            Self::render_card(&mut columns[0], "Review", |ui| {
                 ui.strong("Review");
                 ui.label("Save this configuration once the paths below look correct.");
                 ui.add_space(8.0);
@@ -823,42 +1155,60 @@ impl WizardApp {
                 ui.label(format!("Jobs: {}", self.config.jobs.len()));
             });
 
-        ui.add_space(12.0);
+            columns[0].add_space(12.0);
 
-        for (index, job) in self.config.jobs.iter().enumerate() {
-            egui::Frame::group(ui.style())
-                .inner_margin(egui::Margin::same(18))
-                .show(ui, |ui| {
-                    ui.strong(format!("Job {}: {}", index + 1, job.name.trim()));
-                    ui.label(format!("Folder inside USB root: {}", job.source.trim()));
-                    ui.label(format!("Local target: {}", job.target.trim()));
-                    let target = PathBuf::from(job.target.trim());
-                    if !target.as_os_str().is_empty() && target.is_absolute() {
-                        ui.horizontal(|ui| {
-                            ui.small("Local target status:");
-                            Self::render_path_badge(ui, &target);
-                        });
+            egui::ScrollArea::vertical()
+                .max_height(360.0)
+                .show(&mut columns[0], |ui| {
+                    for (index, job) in self.config.jobs.iter().enumerate() {
+                        egui::Frame::group(ui.style())
+                            .inner_margin(egui::Margin::same(18))
+                            .show(ui, |ui| {
+                                ui.strong(format!("Job {}: {}", index + 1, job.name.trim()));
+                                ui.label(format!("Folder inside USB root: {}", job.source.trim()));
+                                ui.label(format!("Local target: {}", job.target.trim()));
+                                let target = PathBuf::from(job.target.trim());
+                                if !target.as_os_str().is_empty() && target.is_absolute() {
+                                    ui.horizontal(|ui| {
+                                        ui.small("Local target status:");
+                                        Self::render_path_badge(ui, &target);
+                                    });
+                                }
+                            });
+                        ui.add_space(8.0);
                     }
                 });
-            ui.add_space(8.0);
-        }
 
-        ui.add_space(8.0);
-        ui.horizontal(|ui| {
-            if ui.button("Save").clicked() {
-                match self.validate_and_save() {
-                    Ok(()) => {
-                        self.status = format!("Saved {}", self.paths.config_file.display());
+            columns[0].add_space(8.0);
+            columns[0].horizontal(|ui| {
+                if ui.button("Save").clicked() {
+                    match self.validate_and_save() {
+                        Ok(()) => {
+                            self.status = format!("Saved {}", self.paths.config_file.display());
+                        }
+                        Err(error) => self.status = format!("Save failed: {error}"),
                     }
-                    Err(error) => self.status = format!("Save failed: {error}"),
                 }
-            }
-            if ui.button("Save and Close").clicked() {
-                match self.validate_and_save() {
-                    Ok(()) => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
-                    Err(error) => self.status = format!("Save failed: {error}"),
+                if ui.button("Save and Close").clicked() {
+                    match self.validate_and_save() {
+                        Ok(()) => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
+                        Err(error) => self.status = format!("Save failed: {error}"),
+                    }
                 }
-            }
+            });
+
+            Self::render_card(&mut columns[1], "Final checklist", |ui| {
+                ui.label("USB root points at the drive or folder you actually want to mirror.");
+                ui.label("Job sources sit inside that USB root.");
+                ui.label("Local targets are absolute folders on this machine.");
+                ui.label("Shadow cache location looks correct.");
+            });
+            columns[1].add_space(12.0);
+            Self::render_card(&mut columns[1], "Save result", |ui| {
+                ui.label("Use `Save` if you want to stay in the wizard.");
+                ui.label("Use `Save and Close` if the config looks final.");
+                ui.label("If validation fails, the status line at the top will show the exact field problem.");
+            });
         });
     }
 }

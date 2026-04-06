@@ -688,50 +688,48 @@ impl App {
         if let Some(progress) = self.sync_progress.as_ref() {
             return format!(
                 "ShadowSync\n{}\n{}",
-                self.progress_headline(progress),
-                self.progress_detail(progress)
+                self.tooltip_progress_headline(progress),
+                self.tooltip_progress_detail(progress)
             );
         }
 
         if let Some(error) = self.config_error.as_ref() {
-            format!("ShadowSync\nConfig error\n{}", truncate(error, 90))
+            format!(
+                "ShadowSync\nConfig error\n{}",
+                truncate(error, 48)
+            )
         } else {
-            let drive_line = self
-                .config
-                .as_ref()
-                .map(|config| {
-                    format!(
-                        "Drive {}: {}",
-                        config.drive_label,
-                        if self.drive_present { "ready" } else { "missing" }
-                    )
-                })
-                .unwrap_or_else(|| "Drive: not configured".to_string());
             format!(
                 "ShadowSync\n{}\n{}",
-                drive_line,
-                truncate(&self.last_status, 100)
+                self.tooltip_drive_line(),
+                self.tooltip_status_line()
             )
         }
     }
 
     fn menu_status_text(&self) -> String {
         if self.config_error.is_some() {
-            "Status: Config error".to_string()
+            "State: Config error".to_string()
         } else if self.syncing {
             let active_sync = self.active_sync.unwrap_or(ActiveSync {
                 direction: SyncDirection::FromUsb,
                 trigger: SyncTrigger::Manual,
             });
-            format!("Status: {}", active_sync.direction.syncing_text())
+            format!(
+                "State: {}",
+                match active_sync.direction {
+                    SyncDirection::FromUsb => "Syncing from USB",
+                    SyncDirection::ToUsb => "Syncing to USB",
+                }
+            )
         } else if !self.drive_present {
-            "Status: Waiting for drive".to_string()
+            "State: Waiting for USB".to_string()
         } else if self.last_status.starts_with("Watching ") {
-            "Status: Watching".to_string()
+            "State: Watching".to_string()
         } else if self.last_status.starts_with("Last sync ") {
-            "Status: Synced".to_string()
+            "State: Synced".to_string()
         } else {
-            "Status: Ready".to_string()
+            "State: Ready".to_string()
         }
     }
 
@@ -745,38 +743,71 @@ impl App {
                         format!("{}/{}", progress.operations_done, progress.operations_total)
                     })
             )
+        } else if self.config_error.is_some() {
+            "Detail: Open Setup Wizard".to_string()
+        } else if !self.drive_present {
+            "Detail: USB not mounted".to_string()
+        } else if self.last_status.starts_with("Last sync ") {
+            "Detail: Last run completed".to_string()
+        } else if self.last_status.starts_with("Watching ") {
+            "Detail: Live watch active".to_string()
         } else {
-            "Progress: Idle".to_string()
+            "Detail: Ready".to_string()
         }
     }
 
-    fn progress_headline(&self, progress: &SyncProgress) -> String {
+    fn tooltip_drive_line(&self) -> String {
+        self.config
+            .as_ref()
+            .map(|config| {
+                format!(
+                    "USB {}: {}",
+                    config.drive_label,
+                    if self.drive_present { "ready" } else { "missing" }
+                )
+            })
+            .unwrap_or_else(|| "USB: not configured".to_string())
+    }
+
+    fn tooltip_status_line(&self) -> String {
+        if self.config_error.is_some() {
+            "Open Setup Wizard to repair the config.".to_string()
+        } else if self.last_status.starts_with("Last sync ") {
+            "Last sync completed.".to_string()
+        } else if self.last_status.starts_with("Watching ") {
+            "Watching for changes.".to_string()
+        } else {
+            truncate(&self.last_status, 48)
+        }
+    }
+
+    fn tooltip_progress_headline(&self, progress: &SyncProgress) -> String {
+        let percent = self
+            .progress_percent(progress)
+            .map(|value| format!("{value}%"))
+            .unwrap_or_else(|| format!("{}/{}", progress.operations_done, progress.operations_total));
+        let direction = self
+            .active_sync
+            .map(|active| match active.direction {
+                SyncDirection::FromUsb => "From USB",
+                SyncDirection::ToUsb => "To USB",
+            })
+            .unwrap_or("Sync");
+        format!("{direction}: {percent}")
+    }
+
+    fn tooltip_progress_detail(&self, progress: &SyncProgress) -> String {
         let phase = match progress.phase {
             SyncPhase::Planning => "Planning",
             SyncPhase::Copying => "Copying",
             SyncPhase::Deleting => "Deleting",
             SyncPhase::Finalizing => "Finalizing",
         };
-        let percent = self
-            .progress_percent(progress)
-            .map(|value| format!("{value}%"))
-            .unwrap_or_else(|| "0%".to_string());
-        let direction = self
-            .active_sync
-            .map(|active| active.direction.syncing_text())
-            .unwrap_or("Syncing");
-        format!(
-            "{direction} | {phase} {}/{} ({percent})",
-            progress.operations_done, progress.operations_total
-        )
-    }
-
-    fn progress_detail(&self, progress: &SyncProgress) -> String {
-        let path = progress
+        let current = progress
             .current_path
             .as_deref()
-            .map(|value| truncate(value, 80))
-            .unwrap_or_else(|| progress.current_job.clone());
+            .map(|value| truncate(value, 18))
+            .unwrap_or_else(|| truncate(&progress.current_job, 18));
         let bytes = if progress.bytes_total > 0 {
             format!(
                 "{:.1}/{:.1} MB",
@@ -784,13 +815,16 @@ impl App {
                 progress.bytes_total as f64 / (1024.0 * 1024.0)
             )
         } else {
-            "0.0/0.0 MB".to_string()
+            format!(
+                "{}/{} ops",
+                progress.operations_done, progress.operations_total
+            )
         };
         format!(
-            "{} | job {}/{} | {}",
-            path,
+            "{phase} | job {}/{} | {} | {}",
             progress.job_index.max(1),
             progress.job_count.max(1),
+            current,
             bytes
         )
     }
@@ -955,5 +989,20 @@ fn truncate(value: &str, max: usize) -> String {
         format!("{truncated}...")
     } else {
         truncated
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn truncate_adds_ellipsis_when_value_is_too_long() {
+        assert_eq!(truncate("abcdef", 4), "abcd...");
+    }
+
+    #[test]
+    fn truncate_keeps_short_values() {
+        assert_eq!(truncate("abc", 4), "abc");
     }
 }
