@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - dev
   workflow_dispatch:
 
 env:
@@ -23,6 +24,7 @@ jobs:
       version: ${{ steps.version.outputs.version }}
       tag: ${{ steps.version.outputs.tag }}
       mode: ${{ steps.tag_state.outputs.mode }}
+      release_enabled: ${{ steps.tag_state.outputs.release_enabled }}
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -42,12 +44,19 @@ jobs:
         shell: bash
         run: |
           tag="${{ steps.version.outputs.tag }}"
-          if ! tag_sha="$(git rev-list -n 1 "$tag" 2>/dev/null)"; then
+          branch="${GITHUB_REF_NAME}"
+          if [ "$branch" != "main" ]; then
+            echo "mode=build" >> "$GITHUB_OUTPUT"
+            echo "release_enabled=false" >> "$GITHUB_OUTPUT"
+          elif ! tag_sha="$(git rev-list -n 1 "$tag" 2>/dev/null)"; then
             echo "mode=new" >> "$GITHUB_OUTPUT"
+            echo "release_enabled=true" >> "$GITHUB_OUTPUT"
           elif [ "$tag_sha" = "$GITHUB_SHA" ]; then
             echo "mode=rerun" >> "$GITHUB_OUTPUT"
+            echo "release_enabled=true" >> "$GITHUB_OUTPUT"
           else
             echo "mode=skip" >> "$GITHUB_OUTPUT"
+            echo "release_enabled=false" >> "$GITHUB_OUTPUT"
             echo "Version tag $tag already exists on commit $tag_sha. Skipping release for unchanged Cargo version."
           fi
 
@@ -217,7 +226,7 @@ jobs:
       - build-windows
       - build-macos
       - build-linux
-    if: needs.metadata.outputs.mode != 'skip'
+    if: needs.metadata.outputs.release_enabled == 'true'
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ github.token }}
