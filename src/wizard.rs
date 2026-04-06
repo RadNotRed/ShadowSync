@@ -159,7 +159,8 @@ impl WizardApp {
     }
 
     fn validate_and_save(&mut self) -> Result<()> {
-        let serialized = serde_json::to_string_pretty(&self.config)
+        let config = self.normalized_config_for_save();
+        let serialized = serde_json::to_string_pretty(&config)
             .context("failed to serialize config.json")?;
 
         let temp_file = self.paths.app_dir.join("config.validation.json");
@@ -181,6 +182,21 @@ impl WizardApp {
         fs::write(&self.paths.config_file, serialized)
             .with_context(|| format!("failed to write {}", self.paths.config_file.display()))?;
         Ok(())
+    }
+
+    fn normalized_config_for_save(&self) -> AppConfig {
+        let mut config = self.config.clone();
+        normalize_optional_string(&mut config.drive.letter);
+        normalize_optional_string(&mut config.drive.path);
+        normalize_optional_string(&mut config.cache.root);
+
+        for job in &mut config.jobs {
+            job.name = job.name.trim().to_string();
+            job.source = job.source.trim().to_string();
+            job.target = job.target.trim().to_string();
+        }
+
+        config
     }
 
     fn current_drive_root(&self) -> Option<PathBuf> {
@@ -423,6 +439,20 @@ impl eframe::App for WizardApp {
     }
 }
 
+fn normalize_optional_string(value: &mut Option<String>) {
+    match value.take() {
+        Some(current) => {
+            let trimmed = current.trim();
+            if trimmed.is_empty() {
+                *value = None;
+            } else {
+                *value = Some(trimmed.to_string());
+            }
+        }
+        None => *value = None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -452,5 +482,19 @@ mod tests {
             fs::read_to_string(context.recovery_backup_path.unwrap()).unwrap(),
             "{ bad json"
         );
+    }
+
+    #[test]
+    fn normalize_optional_string_clears_blank_values() {
+        let mut value = Some("   ".to_string());
+        normalize_optional_string(&mut value);
+        assert_eq!(value, None);
+    }
+
+    #[test]
+    fn normalize_optional_string_trims_non_blank_values() {
+        let mut value = Some("  C:\\cache  ".to_string());
+        normalize_optional_string(&mut value);
+        assert_eq!(value, Some("C:\\cache".to_string()));
     }
 }
