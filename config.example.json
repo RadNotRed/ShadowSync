@@ -21,7 +21,7 @@
     {
       "name": "Documents",
       "source": "Backups\\Documents",
-      "target": "C:\\Users\\rad\\Documents\\Important",
+      "target": "C:\\Users\\you\\Documents\\Important",
       "mirror_deletes": true
     }
   ]

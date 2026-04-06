@@ -5,7 +5,7 @@ use std::path::{Component, Path, PathBuf};
 use std::time::SystemTime;
 
 use anyhow::{Context, Result, anyhow, bail, ensure};
-use directories::ProjectDirs;
+use directories::{ProjectDirs, UserDirs};
 use serde::{Deserialize, Serialize};
 
 const APP_QUALIFIER: &str = "com";
@@ -54,6 +54,18 @@ impl AppPaths {
         if !self.log_file.exists() {
             fs::write(&self.log_file, b"")
                 .with_context(|| format!("failed to create {}", self.log_file.display()))?;
+        }
+
+        Ok(())
+    }
+
+    pub fn ensure_wizard_layout(&self) -> Result<()> {
+        fs::create_dir_all(&self.app_dir)
+            .with_context(|| format!("failed to create {}", self.app_dir.display()))?;
+
+        if !self.config_file.exists() {
+            fs::write(&self.config_file, default_config_template())
+                .with_context(|| format!("failed to create {}", self.config_file.display()))?;
         }
 
         Ok(())
@@ -174,7 +186,7 @@ impl Default for JobConfig {
         Self {
             name: "Documents".to_string(),
             source: default_job_source().to_string(),
-            target: default_job_target().to_string(),
+            target: default_job_target(),
             mirror_deletes: true,
         }
     }
@@ -521,6 +533,13 @@ mod tests {
         assert_eq!(label, default_mount_path());
         assert_eq!(root, PathBuf::from(default_mount_path()));
     }
+
+    #[test]
+    fn default_job_target_uses_real_path_text() {
+        let target = default_job_target();
+        assert!(target.ends_with("Important"));
+        assert!(!target.contains("YOUR_NAME"));
+    }
 }
 
 #[cfg_attr(target_os = "windows", allow(dead_code))]
@@ -531,7 +550,7 @@ fn default_mount_path() -> &'static str {
     }
     #[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
     {
-        "/media/YOUR_NAME/USB"
+        "/media/user/USB"
     }
     #[cfg(target_os = "windows")]
     {
@@ -550,17 +569,28 @@ fn default_job_source() -> &'static str {
     }
 }
 
-fn default_job_target() -> &'static str {
+fn default_job_target() -> String {
+    default_documents_dir().join("Important").display().to_string()
+}
+
+fn default_documents_dir() -> PathBuf {
+    if let Some(user_dirs) = UserDirs::new() {
+        if let Some(documents) = user_dirs.document_dir() {
+            return documents.to_path_buf();
+        }
+        return user_dirs.home_dir().join("Documents");
+    }
+
     #[cfg(target_os = "windows")]
     {
-        r"C:\Users\YOUR_NAME\Documents\Important"
+        PathBuf::from(r"C:\Users\Public\Documents")
     }
     #[cfg(target_os = "macos")]
     {
-        "/Users/YOUR_NAME/Documents/Important"
+        PathBuf::from("/Users/Shared/Documents")
     }
     #[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
     {
-        "/home/YOUR_NAME/Documents/Important"
+        PathBuf::from("/tmp")
     }
 }

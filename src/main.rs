@@ -9,11 +9,12 @@ mod watcher;
 mod wizard;
 fn main() -> anyhow::Result<()> {
     let paths = config::AppPaths::discover()?;
-    paths.ensure_layout()?;
 
     if wizard::maybe_run_from_args(&paths)? {
         return Ok(());
     }
+
+    paths.ensure_layout()?;
 
     platform::configure_process();
 

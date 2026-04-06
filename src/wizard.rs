@@ -30,6 +30,8 @@ pub fn maybe_run_from_args(paths: &AppPaths) -> Result<bool> {
         return Ok(false);
     }
 
+    paths.ensure_wizard_layout()?;
+
     let mut context = WizardLaunchContext::default();
     while let Some(argument) = args.next() {
         if let Some(value) = argument.strip_prefix("--error-message=") {
@@ -268,6 +270,27 @@ impl WizardApp {
         }
     }
 
+    fn effective_shadow_cache_root(&self) -> PathBuf {
+        match self
+            .config
+            .cache
+            .root
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            Some(value) => {
+                let path = PathBuf::from(value);
+                if path.is_absolute() {
+                    path
+                } else {
+                    self.paths.app_dir.join(path)
+                }
+            }
+            None => self.paths.shadow_root.clone(),
+        }
+    }
+
     fn banner_text(&self) -> Option<String> {
         let mut parts = Vec::new();
         if let Some(error_message) = self.context.error_message.as_ref() {
@@ -374,6 +397,11 @@ impl eframe::App for WizardApp {
                         self.browse_cache_root();
                     }
                 });
+                ui.small(format!(
+                    "Current shadow cache: {}",
+                    self.effective_shadow_cache_root().display()
+                ));
+                ui.small("Leave custom cache root blank to use the default app cache folder.");
 
                 ui.separator();
                 ui.heading("Comparison");
