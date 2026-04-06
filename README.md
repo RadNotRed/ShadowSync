@@ -53,7 +53,20 @@ This README stays short on purpose. Use the docs for setup details, behavior, an
 
 ```powershell
 cargo test --locked
+cargo wizard
 cargo build --release
+```
+
+To open only the setup UI without starting the tray workflow:
+
+```powershell
+cargo wizard
+```
+
+For a release-mode UI run:
+
+```powershell
+cargo wizard-release
 ```
 
 For docs previews:

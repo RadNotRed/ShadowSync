@@ -1,0 +1,3 @@
+[alias]
+wizard = "run -- --wizard"
+wizard-release = "run --release -- --wizard"
