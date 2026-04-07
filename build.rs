@@ -10,6 +10,8 @@ use resvg::{
     usvg,
 };
 
+const WINDOWS_ICON_SIZES: [u32; 10] = [16, 20, 24, 32, 40, 48, 64, 96, 128, 256];
+
 fn main() {
     println!("cargo:rerun-if-changed=.github/assets/icon.svg");
     println!("cargo:rerun-if-changed=Cargo.toml");
@@ -36,7 +38,7 @@ fn generate_release_assets() -> Result<(), Box<dyn Error>> {
         .join(target);
     fs::create_dir_all(&output_dir)?;
 
-    let svg_data = fs::read(svg_path)?;
+    let svg_data = fs::read(&svg_path)?;
     let options = usvg::Options::default();
     let tree = usvg::Tree::from_data(&svg_data, &options)?;
     let size = tree.size();
@@ -50,6 +52,9 @@ fn generate_release_assets() -> Result<(), Box<dyn Error>> {
             write_png(&runtime_icon_path, side, side, &rgba)?;
         }
     }
+
+    let icon_path = output_dir.join("shadowsync.ico");
+    write_icon_from_svg(&svg_path, &icon_path)?;
 
     Ok(())
 }
@@ -88,7 +93,7 @@ fn write_icon_from_svg(svg_path: &Path, icon_path: &Path) -> Result<(), Box<dyn 
     let size = tree.size();
 
     let mut icon_dir = IconDir::new(ResourceType::Icon);
-    for side in [16u32, 24, 32, 48, 64, 128, 256] {
+    for side in WINDOWS_ICON_SIZES {
         let rgba = render_svg(&tree, side, size.width(), size.height())?;
         let image = IconImage::from_rgba_data(side, side, rgba);
         icon_dir.add_entry(IconDirEntry::encode(&image)?);

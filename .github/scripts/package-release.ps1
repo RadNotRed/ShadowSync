@@ -32,30 +32,6 @@ function Find-Iscc {
     throw "Inno Setup compiler not found. Install it in the workflow before packaging."
 }
 
-function Export-EmbeddedAppIcon {
-    param(
-        [string]$ExePath,
-        [string]$OutputPath
-    )
-
-    Add-Type -AssemblyName System.Drawing
-
-    $icon = [System.Drawing.Icon]::ExtractAssociatedIcon($ExePath)
-    if ($null -eq $icon) {
-        throw "Failed to extract embedded icon from $ExePath"
-    }
-    try {
-        $fileStream = [System.IO.File]::Create($OutputPath)
-        try {
-            $icon.Save($fileStream)
-        } finally {
-            $fileStream.Dispose()
-        }
-    } finally {
-        $icon.Dispose()
-    }
-}
-
 $cargoToml = Join-Path $RepoRoot "Cargo.toml"
 $version = Get-PackageVersion -CargoTomlPath $cargoToml
 $releaseDir = Join-Path $RepoRoot ("target\{0}\release" -f $TargetTriple)
@@ -76,8 +52,10 @@ if (-not (Test-Path -LiteralPath $exePath)) {
     throw "Release executable not found at $exePath. Build the project first."
 }
 
-$iconPath = Join-Path $releaseDir "shadowsync.ico"
-Export-EmbeddedAppIcon -ExePath $exePath -OutputPath $iconPath
+$iconPath = Join-Path $RepoRoot ("target\generated-assets\{0}\shadowsync.ico" -f $TargetTriple)
+if (-not (Test-Path -LiteralPath $iconPath)) {
+    throw "Generated icon not found at $iconPath. The build should have produced a multi-resolution .ico."
+}
 
 $portableRoot = Join-Path $releaseDir "portable"
 if (Test-Path -LiteralPath $portableRoot) {
