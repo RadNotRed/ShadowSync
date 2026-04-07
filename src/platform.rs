@@ -143,89 +143,75 @@ pub fn show_wizard_loading_indicator(signal_path: &Path) -> Result<()> {
     {
         let signal_path = powershell_single_quoted(&signal_path.display().to_string());
         let script = format!(
-            "Add-Type -AssemblyName System.Windows.Forms; \
-             Add-Type -AssemblyName System.Drawing; \
+            "Add-Type -AssemblyName PresentationFramework; \
+             Add-Type -AssemblyName PresentationCore; \
+             Add-Type -AssemblyName WindowsBase; \
              $signal = '{signal_path}'; \
-             $form = New-Object System.Windows.Forms.Form; \
-             $form.Text = 'ShadowSync'; \
-             $form.StartPosition = 'CenterScreen'; \
-             $form.Size = New-Object System.Drawing.Size(340, 176); \
-             $form.TopMost = $true; \
-             $form.FormBorderStyle = 'FixedDialog'; \
-             $form.ControlBox = $false; \
-             $form.MinimizeBox = $false; \
-             $form.MaximizeBox = $false; \
-             $form.BackColor = [System.Drawing.Color]::FromArgb(250, 250, 252); \
-             $form.Font = New-Object System.Drawing.Font('Segoe UI', 9); \
-             $spinnerIndex = 0; \
-             $spinner = New-Object System.Windows.Forms.Panel; \
-             $spinner.Size = New-Object System.Drawing.Size(72, 72); \
-             $spinner.Location = New-Object System.Drawing.Point(26, 44); \
-             $spinner.BackColor = $form.BackColor; \
-             $spinner.Add_Paint({{ \
-                 param($sender, $eventArgs) \
-                 $graphics = $eventArgs.Graphics; \
-                 $graphics.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias; \
-                 $centerX = $sender.Width / 2.0; \
-                 $centerY = $sender.Height / 2.0; \
-                 $radius = 22.0; \
-                 for ($i = 0; $i -lt 12; $i++) {{ \
-                     $step = ($i - $script:spinnerIndex + 12) % 12; \
-                     $alpha = [Math]::Max(48, 255 - ($step * 18)); \
-                     $angle = (([Math]::PI * 2.0) / 12.0) * $i; \
-                     $x = $centerX + ([Math]::Cos($angle) * $radius) - 4.0; \
-                     $y = $centerY + ([Math]::Sin($angle) * $radius) - 4.0; \
-                     $brush = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb([int]$alpha, 31, 122, 194)); \
-                     $graphics.FillEllipse($brush, [float]$x, [float]$y, 8.0, 8.0); \
-                     $brush.Dispose(); \
-                 }} \
-             }}); \
-             $title = New-Object System.Windows.Forms.Label; \
-             $title.Text = 'Starting Setup Wizard'; \
-             $title.AutoSize = $true; \
-             $title.Location = New-Object System.Drawing.Point(118, 48); \
-             $title.Font = New-Object System.Drawing.Font('Segoe UI', 12, [System.Drawing.FontStyle]::Bold); \
-             $label = New-Object System.Windows.Forms.Label; \
-             $label.Text = 'Loading ShadowSync settings and recovery details.'; \
-             $label.AutoSize = $true; \
-             $label.MaximumSize = New-Object System.Drawing.Size(180, 0); \
-             $label.Location = New-Object System.Drawing.Point(118, 78); \
-             $label.ForeColor = [System.Drawing.Color]::FromArgb(78, 84, 94); \
-             $hint = New-Object System.Windows.Forms.Label; \
-             $hint.Text = 'This should only take a moment.'; \
-             $hint.AutoSize = $true; \
-             $hint.Location = New-Object System.Drawing.Point(118, 118); \
-             $hint.ForeColor = [System.Drawing.Color]::FromArgb(110, 116, 126); \
-             $divider = New-Object System.Windows.Forms.Label; \
-             $divider.BorderStyle = 'Fixed3D'; \
-             $divider.AutoSize = $false; \
-             $divider.Size = New-Object System.Drawing.Size(288, 2); \
-             $divider.Location = New-Object System.Drawing.Point(26, 24); \
-             $divider.ForeColor = [System.Drawing.Color]::FromArgb(224, 227, 232); \
-             $form.Controls.Add($divider); \
-             $form.Controls.Add($spinner); \
-             $form.Controls.Add($title); \
-             $form.Controls.Add($label); \
-             $form.Controls.Add($hint); \
-             $animate = New-Object System.Windows.Forms.Timer; \
-             $animate.Interval = 80; \
-             $animate.Add_Tick({{ $script:spinnerIndex = ($script:spinnerIndex + 1) % 12; $spinner.Invalidate(); }}); \
-             $animate.Start(); \
-             $timer = New-Object System.Windows.Forms.Timer; \
-             $timer.Interval = 150; \
-             $timer.Add_Tick({{ if (-not (Test-Path -LiteralPath $signal)) {{ $form.Close() }} }}); \
-             $timer.Start(); \
-             $timeout = New-Object System.Windows.Forms.Timer; \
-             $timeout.Interval = 20000; \
-             $timeout.Add_Tick({{ $form.Close() }}); \
+             $window = New-Object System.Windows.Window; \
+             $window.Width = 132; \
+             $window.Height = 132; \
+             $window.WindowStyle = 'None'; \
+             $window.ResizeMode = 'NoResize'; \
+             $window.ShowInTaskbar = $false; \
+             $window.Topmost = $true; \
+             $window.WindowStartupLocation = 'CenterScreen'; \
+             $window.AllowsTransparency = $true; \
+             $window.Background = [System.Windows.Media.Brushes]::Transparent; \
+             $border = New-Object System.Windows.Controls.Border; \
+             $border.Width = 132; \
+             $border.Height = 132; \
+             $border.Background = New-Object System.Windows.Media.SolidColorBrush([System.Windows.Media.Color]::FromArgb(230, 58, 58, 60)); \
+             $border.CornerRadius = New-Object System.Windows.CornerRadius(18); \
+             $grid = New-Object System.Windows.Controls.Grid; \
+             $spinner = New-Object System.Windows.Controls.Canvas; \
+             $spinner.Width = 60; \
+             $spinner.Height = 60; \
+             $spinner.HorizontalAlignment = 'Center'; \
+             $spinner.VerticalAlignment = 'Center'; \
+             $rotate = New-Object System.Windows.Media.RotateTransform(0); \
+             $spinner.RenderTransform = $rotate; \
+             $spinner.RenderTransformOrigin = New-Object System.Windows.Point(0.5, 0.5); \
+             $center = 30.0; \
+             $radius = 20.0; \
+             $dotSize = 8.0; \
+             for ($i = 0; $i -lt 12; $i++) {{ \
+                 $angle = (([Math]::PI * 2.0) / 12.0) * $i - ([Math]::PI / 2.0); \
+                 $x = $center + ([Math]::Cos($angle) * $radius) - ($dotSize / 2.0); \
+                 $y = $center + ([Math]::Sin($angle) * $radius) - ($dotSize / 2.0); \
+                 $dot = New-Object System.Windows.Shapes.Ellipse; \
+                 $dot.Width = $dotSize; \
+                 $dot.Height = $dotSize; \
+                 $dot.Fill = New-Object System.Windows.Media.SolidColorBrush([System.Windows.Media.Color]::FromRgb(245, 245, 247)); \
+                 $dot.Opacity = 0.16 + ((11 - $i) * 0.065); \
+                 [System.Windows.Controls.Canvas]::SetLeft($dot, $x); \
+                 [System.Windows.Controls.Canvas]::SetTop($dot, $y); \
+                 [void]$spinner.Children.Add($dot); \
+             }} \
+             [void]$grid.Children.Add($spinner); \
+             $border.Child = $grid; \
+             $window.Content = $border; \
+             $animation = New-Object System.Windows.Media.Animation.DoubleAnimation; \
+             $animation.From = 0.0; \
+             $animation.To = 360.0; \
+             $animation.Duration = New-Object System.Windows.Duration([System.TimeSpan]::FromMilliseconds(850)); \
+             $animation.RepeatBehavior = [System.Windows.Media.Animation.RepeatBehavior]::Forever; \
+             $rotate.BeginAnimation([System.Windows.Media.RotateTransform]::AngleProperty, $animation); \
+             $poll = New-Object System.Windows.Threading.DispatcherTimer; \
+             $poll.Interval = [System.TimeSpan]::FromMilliseconds(120); \
+             $poll.Add_Tick({{ if (-not (Test-Path -LiteralPath $signal)) {{ $window.Close() }} }}); \
+             $poll.Start(); \
+             $timeout = New-Object System.Windows.Threading.DispatcherTimer; \
+             $timeout.Interval = [System.TimeSpan]::FromSeconds(20); \
+             $timeout.Add_Tick({{ $window.Close() }}); \
              $timeout.Start(); \
-             [void]$form.ShowDialog()"
+             [void]$window.ShowDialog()"
         );
         return run_hidden_detached(
             "powershell.exe",
             &[
                 "-NoLogo",
                 "-NoProfile",
+                "-STA",
                 "-NonInteractive",
                 "-ExecutionPolicy",
                 "Bypass",

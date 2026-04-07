@@ -49,6 +49,7 @@ pub fn maybe_run_from_args(paths: &AppPaths) -> Result<bool> {
         }
     }
 
+    start_loading_indicator(paths, &mut context)?;
     run_setup_wizard(paths.clone(), context)?;
     Ok(true)
 }
@@ -61,10 +62,12 @@ pub fn open_setup_wizard_with_context(
     paths: &AppPaths,
     context: &WizardLaunchContext,
 ) -> Result<()> {
-    let loading_signal_path = create_loading_signal_path(paths)?;
-    fs::write(&loading_signal_path, b"loading")
-        .with_context(|| format!("failed to create {}", loading_signal_path.display()))?;
-    let _ = platform::show_wizard_loading_indicator(&loading_signal_path);
+    let mut context = context.clone();
+    start_loading_indicator(paths, &mut context)?;
+    let loading_signal_path = context
+        .loading_signal_path
+        .clone()
+        .context("missing wizard loading signal path")?;
 
     let exe = platform::current_exe()?;
     let mut command = Command::new(exe);
@@ -149,6 +152,23 @@ fn create_loading_signal_path(paths: &AppPaths) -> Result<PathBuf> {
         .map(|duration| duration.as_millis())
         .unwrap_or_default();
     Ok(paths.app_dir.join(format!("wizard-loading-{timestamp}.signal")))
+}
+
+fn start_loading_indicator(paths: &AppPaths, context: &mut WizardLaunchContext) -> Result<()> {
+    if context.loading_signal_path.is_some() {
+        return Ok(());
+    }
+
+    let loading_signal_path = create_loading_signal_path(paths)?;
+    fs::write(&loading_signal_path, b"loading")
+        .with_context(|| format!("failed to create {}", loading_signal_path.display()))?;
+
+    if let Err(error) = platform::show_wizard_loading_indicator(&loading_signal_path) {
+        append_wizard_log(paths, format!("Wizard loading splash failed: {error}"));
+    }
+
+    context.loading_signal_path = Some(loading_signal_path);
+    Ok(())
 }
 
 fn wizard_log_path(paths: &AppPaths) -> PathBuf {
