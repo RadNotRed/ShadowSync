@@ -36,39 +36,24 @@ impl AppPaths {
     }
 
     pub fn ensure_layout(&self) -> Result<()> {
-        fs::create_dir_all(&self.app_dir)
-            .with_context(|| format!("failed to create {}", self.app_dir.display()))?;
-        fs::create_dir_all(&self.shadow_root)
-            .with_context(|| format!("failed to create {}", self.shadow_root.display()))?;
-
-        if !self.config_file.exists() {
-            fs::write(&self.config_file, default_config_template())
-                .with_context(|| format!("failed to create {}", self.config_file.display()))?;
-        }
-
-        if !self.manifest_file.exists() {
-            fs::write(&self.manifest_file, "{}")
-                .with_context(|| format!("failed to create {}", self.manifest_file.display()))?;
-        }
-
-        if !self.log_file.exists() {
-            fs::write(&self.log_file, b"")
-                .with_context(|| format!("failed to create {}", self.log_file.display()))?;
-        }
+        self.ensure_app_dir()?;
+        ensure_seed_file(&self.shadow_root, None)?;
+        ensure_seed_file(&self.config_file, Some(default_config_template().as_bytes()))?;
+        ensure_seed_file(&self.manifest_file, Some(b"{}"))?;
+        ensure_seed_file(&self.log_file, Some(b""))?;
 
         Ok(())
     }
 
     pub fn ensure_wizard_layout(&self) -> Result<()> {
-        fs::create_dir_all(&self.app_dir)
-            .with_context(|| format!("failed to create {}", self.app_dir.display()))?;
-
-        if !self.config_file.exists() {
-            fs::write(&self.config_file, default_config_template())
-                .with_context(|| format!("failed to create {}", self.config_file.display()))?;
-        }
+        self.ensure_app_dir()?;
+        ensure_seed_file(&self.config_file, Some(default_config_template().as_bytes()))?;
 
         Ok(())
+    }
+
+    fn ensure_app_dir(&self) -> Result<()> {
+        ensure_seed_file(&self.app_dir, None)
     }
 }
 
@@ -263,6 +248,19 @@ pub fn append_log(paths: &AppPaths, line: impl AsRef<str>) {
         .create(true)
         .open(&paths.log_file)
         .and_then(|mut file| std::io::Write::write_all(&mut file, entry.as_bytes()));
+}
+
+fn ensure_seed_file(path: &Path, contents: Option<&[u8]>) -> Result<()> {
+    if path.exists() {
+        return Ok(());
+    }
+
+    match contents {
+        Some(contents) => fs::write(path, contents)
+            .with_context(|| format!("failed to create {}", path.display())),
+        None => fs::create_dir_all(path)
+            .with_context(|| format!("failed to create {}", path.display())),
+    }
 }
 
 fn validate_config(config: AppConfig, paths: &AppPaths) -> Result<ResolvedConfig> {

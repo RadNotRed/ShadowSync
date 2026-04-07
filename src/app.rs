@@ -172,6 +172,33 @@ impl App {
         self.update_ui();
     }
 
+    fn reset_watchers(&mut self) {
+        self.watcher = None;
+        self.watcher_key = None;
+    }
+
+    fn reset_pending_syncs(&mut self) {
+        self.pending_pull_sync = false;
+        self.pending_push_sync = false;
+    }
+
+    fn reset_mount_state(&mut self) {
+        self.has_auto_synced_this_mount = false;
+        self.reset_pending_syncs();
+        self.reset_watchers();
+    }
+
+    fn run_open_action<F>(&mut self, failure_prefix: &str, action: F)
+    where
+        F: FnOnce() -> Result<()>,
+    {
+        if let Err(error) = action() {
+            self.last_status = format!("{failure_prefix}: {error}");
+            append_log(&self.paths, &self.last_status);
+            self.update_ui();
+        }
+    }
+
     fn reload_config(&mut self, force: bool) {
         let current_stamp = config_modified(&self.paths);
         if !force && current_stamp == self.config_stamp {
@@ -198,8 +225,7 @@ impl App {
                 self.config = None;
                 self.config_error = Some(message.clone());
                 self.last_status = format!("Config error: {message}");
-                self.watcher = None;
-                self.watcher_key = None;
+                self.reset_watchers();
                 self.maybe_open_wizard_for_config_error(current_stamp, &message);
             }
         }
@@ -232,42 +258,38 @@ impl App {
     }
 
     fn update_drive_presence(&mut self) {
-        let Some(config) = self.config.as_ref() else {
+        let Some((is_present, drive_label, clear_shadow_on_eject)) = self.config.as_ref().map(|config| {
+            (
+                platform::drive_present(&config.drive_root),
+                config.drive_label.clone(),
+                config.cache.shadow_copy && config.cache.clear_shadow_on_eject,
+            )
+        }) else {
             self.drive_present = false;
-            self.has_auto_synced_this_mount = false;
-            self.pending_pull_sync = false;
-            self.pending_push_sync = false;
-            self.watcher = None;
-            self.watcher_key = None;
+            self.reset_mount_state();
             return;
         };
 
         let was_present = self.drive_present;
-        let is_present = platform::drive_present(&config.drive_root);
         self.drive_present = is_present;
 
         if is_present && !was_present {
-            self.has_auto_synced_this_mount = false;
-            self.pending_pull_sync = false;
-            self.pending_push_sync = false;
+            self.reset_mount_state();
             if !self.syncing {
-                self.last_status = format!("Drive {} detected", config.drive_label);
+                self.last_status = format!("Drive {drive_label} detected");
             }
         }
 
         if !is_present && was_present {
-            if config.cache.shadow_copy && config.cache.clear_shadow_on_eject {
-                if let Err(error) = clear_shadow_cache(config) {
+            if clear_shadow_on_eject
+                && let Some(config) = self.config.as_ref()
+                && let Err(error) = clear_shadow_cache(config)
+            {
                     append_log(&self.paths, format!("Cache cleanup error: {error}"));
-                }
             }
-            self.has_auto_synced_this_mount = false;
-            self.pending_pull_sync = false;
-            self.pending_push_sync = false;
-            self.watcher = None;
-            self.watcher_key = None;
+            self.reset_mount_state();
             if !self.syncing {
-                self.last_status = format!("Drive {} removed", config.drive_label);
+                self.last_status = format!("Drive {drive_label} removed");
             }
         }
     }
@@ -372,8 +394,7 @@ impl App {
 
     fn maybe_run_pending_syncs(&mut self) -> bool {
         let Some(config) = self.config.as_ref() else {
-            self.pending_pull_sync = false;
-            self.pending_push_sync = false;
+            self.reset_pending_syncs();
             return false;
         };
         if self.syncing || !self.drive_present {
@@ -395,28 +416,24 @@ impl App {
 
     fn refresh_watchers(&mut self) {
         if self.syncing {
-            self.watcher = None;
-            self.watcher_key = None;
+            self.reset_watchers();
             return;
         }
 
         let Some(config) = self.config.as_ref() else {
-            self.watcher = None;
-            self.watcher_key = None;
+            self.reset_watchers();
             return;
         };
 
         if !self.drive_present {
-            self.watcher = None;
-            self.watcher_key = None;
+            self.reset_watchers();
             return;
         }
 
         let watch_usb = config.app.sync_while_mounted;
         let watch_local = config.app.auto_sync_to_usb;
         if !watch_usb && !watch_local {
-            self.watcher = None;
-            self.watcher_key = None;
+            self.reset_watchers();
             return;
         }
 
@@ -442,8 +459,7 @@ impl App {
                 }
             }
             Err(error) => {
-                self.watcher = None;
-                self.watcher_key = None;
+                self.reset_watchers();
                 let message = format!("Watch setup failed: {error}");
                 append_log(&self.paths, &message);
                 if !self.syncing {
@@ -525,11 +541,8 @@ impl App {
     }
 
     fn open_config(&mut self) {
-        if let Err(error) = platform::open_path(&self.paths.config_file) {
-            self.last_status = format!("Open config failed: {error}");
-            append_log(&self.paths, &self.last_status);
-            self.update_ui();
-        }
+        let path = self.paths.config_file.clone();
+        self.run_open_action("Open config failed", move || platform::open_path(&path));
     }
 
     fn open_drive_root(&mut self) {
@@ -539,11 +552,10 @@ impl App {
             return;
         };
 
-        if let Err(error) = platform::open_in_file_manager(&config.drive_root) {
-            self.last_status = format!("Open drive failed: {error}");
-            append_log(&self.paths, &self.last_status);
-            self.update_ui();
-        }
+        let drive_root = config.drive_root.clone();
+        self.run_open_action("Open drive failed", move || {
+            platform::open_in_file_manager(&drive_root)
+        });
     }
 
     fn open_shadow_cache(&mut self) {
@@ -553,19 +565,15 @@ impl App {
             return;
         };
 
-        if let Err(error) = platform::open_in_file_manager(&config.cache.shadow_root) {
-            self.last_status = format!("Open shadow cache failed: {error}");
-            append_log(&self.paths, &self.last_status);
-            self.update_ui();
-        }
+        let shadow_root = config.cache.shadow_root.clone();
+        self.run_open_action("Open shadow cache failed", move || {
+            platform::open_in_file_manager(&shadow_root)
+        });
     }
 
     fn open_log(&mut self) {
-        if let Err(error) = platform::open_path(&self.paths.log_file) {
-            self.last_status = format!("Open log failed: {error}");
-            append_log(&self.paths, &self.last_status);
-            self.update_ui();
-        }
+        let path = self.paths.log_file.clone();
+        self.run_open_action("Open log failed", move || platform::open_path(&path));
     }
 
     fn open_setup_wizard(&mut self) {
@@ -577,11 +585,10 @@ impl App {
     }
 
     fn open_app_folder(&mut self) {
-        if let Err(error) = platform::open_in_file_manager(&self.paths.app_dir) {
-            self.last_status = format!("Open app folder failed: {error}");
-            append_log(&self.paths, &self.last_status);
-            self.update_ui();
-        }
+        let path = self.paths.app_dir.clone();
+        self.run_open_action("Open app folder failed", move || {
+            platform::open_in_file_manager(&path)
+        });
     }
 
     fn handle_menu_event(&mut self, event_loop: &ActiveEventLoop, event: MenuEvent) {
@@ -715,13 +722,7 @@ impl App {
                 direction: SyncDirection::FromUsb,
                 trigger: SyncTrigger::Manual,
             });
-            format!(
-                "State: {}",
-                match active_sync.direction {
-                    SyncDirection::FromUsb => "Syncing from USB",
-                    SyncDirection::ToUsb => "Syncing to USB",
-                }
-            )
+            format!("State: {}", active_sync.direction.syncing_text())
         } else if !self.drive_present {
             "State: Waiting for USB".to_string()
         } else if self.last_status.starts_with("Watching ") {
