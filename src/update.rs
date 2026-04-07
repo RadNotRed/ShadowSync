@@ -9,8 +9,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::config::AppPaths;
 
-const GITHUB_LATEST_RELEASE_API: &str =
-    "https://api.github.com/repos/RadNotRed/ShadowSync/releases/latest";
+const GITHUB_RELEASES_API: &str =
+    "https://api.github.com/repos/RadNotRed/ShadowSync/releases?per_page=10";
 pub const RELEASES_PAGE_URL: &str = "https://github.com/RadNotRed/ShadowSync/releases";
 const UPDATE_CACHE_FILE: &str = "update-state.json";
 const AUTOMATIC_CHECK_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
@@ -48,6 +48,8 @@ struct CachedUpdateState {
 struct GitHubRelease {
     tag_name: String,
     html_url: String,
+    #[serde(default)]
+    draft: bool,
 }
 
 pub fn load_cached_available_update(paths: &AppPaths, current_version: &str) -> Option<UpdateInfo> {
@@ -119,16 +121,21 @@ fn fetch_latest_release(current_version: &str) -> Result<Option<UpdateInfo>> {
         .timeout(Duration::from_secs(10))
         .build()
         .context("failed to build update client")?;
-    let release = client
-        .get(GITHUB_LATEST_RELEASE_API)
+    let releases = client
+        .get(GITHUB_RELEASES_API)
         .header("User-Agent", format!("ShadowSync/{current_version}"))
         .header("Accept", "application/vnd.github+json")
+        .header("X-GitHub-Api-Version", "2022-11-28")
         .send()
         .context("failed to contact GitHub Releases")?
         .error_for_status()
         .context("GitHub Releases responded with an error")?
-        .json::<GitHubRelease>()
+        .json::<Vec<GitHubRelease>>()
         .context("failed to parse the GitHub release response")?;
+
+    let Some(release) = releases.into_iter().find(|release| !release.draft) else {
+        return Ok(None);
+    };
 
     let version = normalize_tag(&release.tag_name);
     if !is_newer_version(&version, current_version) {

@@ -45,7 +45,7 @@ pub fn eject_drive(root: &Path) -> Result<()> {
 pub fn open_path(path: &Path) -> Result<()> {
     #[cfg(target_os = "windows")]
     {
-        return run_hidden("explorer.exe", &[&path.display().to_string()]);
+        return start_process_windows(&path.display().to_string());
     }
     #[cfg(target_os = "macos")]
     {
@@ -62,7 +62,7 @@ pub fn open_path(path: &Path) -> Result<()> {
 pub fn open_url(url: &str) -> Result<()> {
     #[cfg(target_os = "windows")]
     {
-        return run_hidden("explorer.exe", &[url]);
+        return start_process_windows(url);
     }
     #[cfg(target_os = "macos")]
     {
@@ -114,6 +114,68 @@ pub fn prompt_for_update(current_version: &str, latest_version: &str) -> bool {
             .show(),
         MessageDialogResult::Yes
     )
+}
+
+pub fn show_wizard_loading_indicator(signal_path: &Path) -> Result<()> {
+    #[cfg(target_os = "windows")]
+    {
+        let signal_path = powershell_single_quoted(&signal_path.display().to_string());
+        let script = format!(
+            "Add-Type -AssemblyName System.Windows.Forms; \
+             Add-Type -AssemblyName System.Drawing; \
+             $signal = '{signal_path}'; \
+             $form = New-Object System.Windows.Forms.Form; \
+             $form.Text = 'ShadowSync'; \
+             $form.StartPosition = 'CenterScreen'; \
+             $form.Size = New-Object System.Drawing.Size(360, 128); \
+             $form.TopMost = $true; \
+             $form.FormBorderStyle = 'FixedDialog'; \
+             $form.ControlBox = $false; \
+             $form.MinimizeBox = $false; \
+             $form.MaximizeBox = $false; \
+             $label = New-Object System.Windows.Forms.Label; \
+             $label.Text = 'Opening Setup Wizard...'; \
+             $label.AutoSize = $true; \
+             $label.Location = New-Object System.Drawing.Point(22, 18); \
+             $label.Font = New-Object System.Drawing.Font('Segoe UI', 11); \
+             $bar = New-Object System.Windows.Forms.ProgressBar; \
+             $bar.Style = 'Marquee'; \
+             $bar.MarqueeAnimationSpeed = 25; \
+             $bar.Size = New-Object System.Drawing.Size(300, 20); \
+             $bar.Location = New-Object System.Drawing.Point(22, 54); \
+             $hint = New-Object System.Windows.Forms.Label; \
+             $hint.Text = 'This should only take a moment.'; \
+             $hint.AutoSize = $true; \
+             $hint.Location = New-Object System.Drawing.Point(22, 82); \
+             $hint.ForeColor = [System.Drawing.Color]::DimGray; \
+             $form.Controls.Add($label); \
+             $form.Controls.Add($bar); \
+             $form.Controls.Add($hint); \
+             $timer = New-Object System.Windows.Forms.Timer; \
+             $timer.Interval = 150; \
+             $timer.Add_Tick({{ if (-not (Test-Path -LiteralPath $signal)) {{ $form.Close() }} }}); \
+             $timer.Start(); \
+             $timeout = New-Object System.Windows.Forms.Timer; \
+             $timeout.Interval = 20000; \
+             $timeout.Add_Tick({{ $form.Close() }}); \
+             $timeout.Start(); \
+             [void]$form.ShowDialog()"
+        );
+        return run_hidden_detached(
+            "powershell.exe",
+            &[
+                "-NoLogo",
+                "-NoProfile",
+                "-NonInteractive",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-Command",
+                &script,
+            ],
+        );
+    }
+    #[allow(unreachable_code)]
+    Ok(())
 }
 
 pub fn sleep_short(duration: Duration) {
@@ -225,6 +287,44 @@ fn run_hidden(program: &str, args: &[&str]) -> Result<()> {
     } else {
         Err(anyhow!("{program} exited with status {status}"))
     }
+}
+
+#[cfg(target_os = "windows")]
+fn run_hidden_detached(program: &str, args: &[&str]) -> Result<()> {
+    use std::os::windows::process::CommandExt;
+
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    Command::new(program)
+        .creation_flags(CREATE_NO_WINDOW)
+        .args(args)
+        .spawn()
+        .with_context(|| format!("failed to start {program}"))?;
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn start_process_windows(target: &str) -> Result<()> {
+    let command = format!(
+        "Start-Process -FilePath '{}'",
+        powershell_single_quoted(target)
+    );
+    run_hidden(
+        "powershell.exe",
+        &[
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            &command,
+        ],
+    )
+}
+
+#[cfg(target_os = "windows")]
+fn powershell_single_quoted(value: &str) -> String {
+    value.replace('\'', "''")
 }
 
 #[cfg(not(target_os = "windows"))]

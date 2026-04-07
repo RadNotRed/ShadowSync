@@ -121,7 +121,7 @@ enum UpdateStatus {
     Checking,
     Available(UpdateInfo),
     Current,
-    Error(String),
+    Error,
 }
 
 struct App {
@@ -276,7 +276,7 @@ impl App {
                 }
             }
             UpdateCheckState::Error(error) => {
-                self.update_status = UpdateStatus::Error(error.clone());
+                self.update_status = UpdateStatus::Error;
                 if outcome.manual {
                     self.last_status = format!("Update check failed: {error}");
                 }
@@ -862,7 +862,7 @@ impl App {
             UpdateStatus::Checking => "Update: checking...".to_string(),
             UpdateStatus::Available(info) => format!("Update: {} available", info.version),
             UpdateStatus::Current => format!("Update: current ({})", env!("CARGO_PKG_VERSION")),
-            UpdateStatus::Error(_) => "Update: check failed".to_string(),
+            UpdateStatus::Error => "Update: check failed".to_string(),
         }
     }
 
@@ -871,8 +871,8 @@ impl App {
             "Opening Setup Wizard...".to_string()
         } else if let UpdateStatus::Available(info) = &self.update_status {
             format!("Update available - {}", info.version)
-        } else if let UpdateStatus::Error(error) = &self.update_status {
-            truncate(&format!("Update check failed: {error}"), 44)
+        } else if matches!(self.update_status, UpdateStatus::Error) {
+            "Update check failed".to_string()
         } else if self.config_error.is_some() {
             "Config error - open Setup Wizard".to_string()
         } else if self.syncing {

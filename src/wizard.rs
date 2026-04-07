@@ -13,6 +13,7 @@ use crate::config::{AppConfig, AppPaths, JobConfig, default_config_template, loa
 use crate::platform;
 
 const WIZARD_FLAG: &str = "--wizard";
+const LOADING_SIGNAL_FLAG: &str = "--loading-signal=";
 const CONTROL_HEIGHT: f32 = 26.0;
 
 #[derive(Debug, Default, Clone)]
@@ -20,6 +21,7 @@ pub struct WizardLaunchContext {
     pub error_message: Option<String>,
     pub recovery_backup_path: Option<PathBuf>,
     pub recovered_default: bool,
+    pub loading_signal_path: Option<PathBuf>,
 }
 
 pub fn maybe_run_from_args(paths: &AppPaths) -> Result<bool> {
@@ -32,6 +34,7 @@ pub fn maybe_run_from_args(paths: &AppPaths) -> Result<bool> {
     }
 
     paths.ensure_wizard_layout()?;
+    append_wizard_log(paths, "Wizard process starting");
 
     let mut context = WizardLaunchContext::default();
     while let Some(argument) = args.next() {
@@ -41,6 +44,8 @@ pub fn maybe_run_from_args(paths: &AppPaths) -> Result<bool> {
             context.recovery_backup_path = Some(PathBuf::from(value));
         } else if argument == "--recovered-default" {
             context.recovered_default = true;
+        } else if let Some(value) = argument.strip_prefix(LOADING_SIGNAL_FLAG) {
+            context.loading_signal_path = Some(PathBuf::from(value));
         }
     }
 
@@ -53,12 +58,21 @@ pub fn open_setup_wizard(paths: &AppPaths) -> Result<()> {
 }
 
 pub fn open_setup_wizard_with_context(
-    _paths: &AppPaths,
+    paths: &AppPaths,
     context: &WizardLaunchContext,
 ) -> Result<()> {
+    let loading_signal_path = create_loading_signal_path(paths)?;
+    fs::write(&loading_signal_path, b"loading")
+        .with_context(|| format!("failed to create {}", loading_signal_path.display()))?;
+    let _ = platform::show_wizard_loading_indicator(&loading_signal_path);
+
     let exe = platform::current_exe()?;
     let mut command = Command::new(exe);
     command.arg(WIZARD_FLAG);
+    command.arg(format!(
+        "{LOADING_SIGNAL_FLAG}{}",
+        loading_signal_path.display()
+    ));
 
     if let Some(error_message) = context.error_message.as_ref() {
         command.arg(format!("--error-message={error_message}"));
@@ -73,11 +87,16 @@ pub fn open_setup_wizard_with_context(
         command.arg("--recovered-default");
     }
 
-    command.spawn().context("failed to launch setup wizard")?;
+    if let Err(error) = command.spawn() {
+        let _ = fs::remove_file(&loading_signal_path);
+        return Err(error).context("failed to launch setup wizard");
+    }
+    append_wizard_log(paths, "Wizard launch requested from tray app");
     Ok(())
 }
 
 pub fn prepare_recovery_context(paths: &AppPaths, error_message: &str) -> Result<WizardLaunchContext> {
+    append_wizard_log(paths, format!("Preparing recovery context: {error_message}"));
     let mut context = WizardLaunchContext {
         error_message: Some(error_message.to_string()),
         ..WizardLaunchContext::default()
@@ -88,6 +107,7 @@ pub fn prepare_recovery_context(paths: &AppPaths, error_message: &str) -> Result
         Err(_) => {
             fs::write(&paths.config_file, default_config_template())
                 .with_context(|| format!("failed to repair {}", paths.config_file.display()))?;
+            append_wizard_log(paths, "Config missing or unreadable; restored default config");
             context.recovered_default = true;
             return Ok(context);
         }
@@ -102,6 +122,10 @@ pub fn prepare_recovery_context(paths: &AppPaths, error_message: &str) -> Result
     let backup_path = backup_invalid_config(paths, &raw)?;
     fs::write(&paths.config_file, default_config_template())
         .with_context(|| format!("failed to repair {}", paths.config_file.display()))?;
+    append_wizard_log(
+        paths,
+        format!("Invalid config backed up to {}", backup_path.display()),
+    );
 
     context.recovered_default = true;
     context.recovery_backup_path = Some(backup_path);
@@ -119,7 +143,33 @@ fn backup_invalid_config(paths: &AppPaths, raw: &str) -> Result<PathBuf> {
     Ok(backup_path)
 }
 
+fn create_loading_signal_path(paths: &AppPaths) -> Result<PathBuf> {
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis())
+        .unwrap_or_default();
+    Ok(paths.app_dir.join(format!("wizard-loading-{timestamp}.signal")))
+}
+
+fn wizard_log_path(paths: &AppPaths) -> PathBuf {
+    paths.app_dir.join("wizard.log")
+}
+
+fn append_wizard_log(paths: &AppPaths, line: impl AsRef<str>) {
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or_default();
+    let entry = format!("[{timestamp}] {}\r\n", line.as_ref());
+    let _ = fs::OpenOptions::new()
+        .append(true)
+        .create(true)
+        .open(wizard_log_path(paths))
+        .and_then(|mut file| std::io::Write::write_all(&mut file, entry.as_bytes()));
+}
+
 fn run_setup_wizard(paths: AppPaths, context: WizardLaunchContext) -> Result<()> {
+    append_wizard_log(&paths, "Wizard UI booting");
     let app = WizardApp::load(paths, context);
     let mut viewport = egui::ViewportBuilder::default()
         .with_inner_size([1120.0, 760.0])
@@ -155,6 +205,8 @@ struct WizardApp {
     missing_target_prompt: Option<MissingTargetPrompt>,
     current_step: WizardStep,
     theme_applied: Option<egui::Theme>,
+    loading_signal_path: Option<PathBuf>,
+    startup_signal_cleared: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -191,6 +243,7 @@ impl WizardApp {
             .and_then(|raw| serde_json::from_str::<AppConfig>(raw.strip_prefix('\u{feff}').unwrap_or(&raw)).ok())
             .unwrap_or_default();
         let missing_target_prompt = first_missing_target_prompt(&config);
+        let loading_signal_path = context.loading_signal_path.clone();
 
         Self {
             paths,
@@ -200,10 +253,13 @@ impl WizardApp {
             missing_target_prompt,
             current_step: WizardStep::Welcome,
             theme_applied: None,
+            loading_signal_path,
+            startup_signal_cleared: false,
         }
     }
 
     fn validate_and_save(&mut self) -> Result<()> {
+        append_wizard_log(&self.paths, "Validating wizard configuration");
         let config = self.normalized_config_for_save();
         let serialized = serde_json::to_string_pretty(&config)
             .context("failed to serialize config.json")?;
@@ -226,6 +282,10 @@ impl WizardApp {
 
         fs::write(&self.paths.config_file, serialized)
             .with_context(|| format!("failed to write {}", self.paths.config_file.display()))?;
+        append_wizard_log(
+            &self.paths,
+            format!("Saved wizard config to {}", self.paths.config_file.display()),
+        );
         Ok(())
     }
 
@@ -382,10 +442,34 @@ impl WizardApp {
             Some(parts.join("\n"))
         }
     }
+
+    fn clear_startup_signal_if_needed(&mut self) {
+        if self.startup_signal_cleared {
+            return;
+        }
+
+        if let Some(path) = self.loading_signal_path.take() {
+            let _ = fs::remove_file(&path);
+        }
+        self.startup_signal_cleared = true;
+        append_wizard_log(&self.paths, "Wizard UI ready");
+    }
+
+    fn open_wizard_log(&mut self) {
+        let path = wizard_log_path(&self.paths);
+        match platform::open_path(&path) {
+            Ok(()) => append_wizard_log(&self.paths, "Wizard log opened"),
+            Err(error) => {
+                self.status = format!("Open wizard log failed: {error}");
+                append_wizard_log(&self.paths, &self.status);
+            }
+        }
+    }
 }
 
 impl eframe::App for WizardApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.clear_startup_signal_if_needed();
         self.apply_system_theme(ctx);
         let palette = self.palette();
 
@@ -415,7 +499,11 @@ impl eframe::App for WizardApp {
                     self.render_info_pill(ui, "Fast shadow-backed USB sync", false);
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if ui.button("Close").clicked() {
+                            append_wizard_log(&self.paths, "Wizard closed from header");
                             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                        }
+                        if ui.button("Open Wizard Log").clicked() {
+                            self.open_wizard_log();
                         }
                     });
                 });
@@ -1186,13 +1274,22 @@ impl WizardApp {
                         Ok(()) => {
                             self.status = format!("Saved {}", self.paths.config_file.display());
                         }
-                        Err(error) => self.status = format!("Save failed: {error}"),
+                        Err(error) => {
+                            self.status = format!("Save failed: {error}");
+                            append_wizard_log(&self.paths, &self.status);
+                        }
                     }
                 }
                 if ui.button("Save and Close").clicked() {
                     match self.validate_and_save() {
-                        Ok(()) => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
-                        Err(error) => self.status = format!("Save failed: {error}"),
+                        Ok(()) => {
+                            append_wizard_log(&self.paths, "Wizard saved and closed");
+                            ctx.send_viewport_cmd(egui::ViewportCommand::Close)
+                        }
+                        Err(error) => {
+                            self.status = format!("Save failed: {error}");
+                            append_wizard_log(&self.paths, &self.status);
+                        }
                     }
                 }
             });
