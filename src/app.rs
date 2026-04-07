@@ -16,7 +16,9 @@ use crate::sync_engine::{
     SyncPhase, SyncProgress, SyncReport, clear_shadow_cache, run_sync_to_usb_with_progress,
     run_sync_with_progress,
 };
-use crate::update::{self, UpdateCheckOutcome, UpdateCheckState, UpdateInfo};
+use crate::update::{
+    self, CachedUpdateStatus, UpdateCheckOutcome, UpdateCheckState, UpdateInfo,
+};
 use crate::watcher::{ChangeWatcher, WatchKind};
 use crate::wizard;
 use crate::platform;
@@ -120,6 +122,7 @@ enum UpdateStatus {
     Idle,
     Checking,
     Available(UpdateInfo),
+    Skipped(UpdateInfo),
     Current,
     Error,
 }
@@ -233,9 +236,12 @@ impl App {
     }
 
     fn restore_cached_update_status(&mut self) {
-        self.update_status = update::load_cached_available_update(&self.paths, env!("CARGO_PKG_VERSION"))
-            .map(UpdateStatus::Available)
-            .unwrap_or(UpdateStatus::Idle);
+        self.update_status =
+            match update::load_cached_update_status(&self.paths, env!("CARGO_PKG_VERSION")) {
+                Some(CachedUpdateStatus::Available(info)) => UpdateStatus::Available(info),
+                Some(CachedUpdateStatus::Skipped(info)) => UpdateStatus::Skipped(info),
+                None => UpdateStatus::Idle,
+            };
     }
 
     fn maybe_check_for_updates(&mut self, manual: bool) {
@@ -262,11 +268,29 @@ impl App {
             UpdateCheckState::Available(info) => {
                 self.last_status = format!("Update available: {}", info.version);
                 self.update_status = UpdateStatus::Available(info.clone());
-                if platform::prompt_for_update(env!("CARGO_PKG_VERSION"), &info.version)
-                    && let Err(error) = platform::open_url(&info.release_url)
-                {
-                    self.last_status = format!("Open update page failed: {error}");
-                    append_log(&self.paths, &self.last_status);
+                match platform::prompt_for_update(env!("CARGO_PKG_VERSION"), &info.version) {
+                    platform::UpdatePromptChoice::OpenRelease => {
+                        if let Err(error) = platform::open_url(&info.release_url) {
+                            self.last_status = format!("Open update page failed: {error}");
+                            append_log(&self.paths, &self.last_status);
+                        }
+                    }
+                    platform::UpdatePromptChoice::RemindLater => {}
+                    platform::UpdatePromptChoice::SkipVersion => {
+                        if let Err(error) = update::skip_version(&self.paths, &info) {
+                            self.last_status = format!("Skip update failed: {error}");
+                            append_log(&self.paths, &self.last_status);
+                        } else {
+                            self.last_status = format!("Skipped update {}", info.version);
+                            self.update_status = UpdateStatus::Skipped(info);
+                        }
+                    }
+                }
+            }
+            UpdateCheckState::Skipped(info) => {
+                self.update_status = UpdateStatus::Skipped(info.clone());
+                if outcome.manual {
+                    self.last_status = format!("Skipped update still available: {}", info.version);
                 }
             }
             UpdateCheckState::UpToDate => {
@@ -684,12 +708,27 @@ impl App {
 
     fn open_latest_release(&mut self) {
         let release_url = match &self.update_status {
-            UpdateStatus::Available(info) => info.release_url.clone(),
+            UpdateStatus::Available(info) | UpdateStatus::Skipped(info) => info.release_url.clone(),
             _ => update::RELEASES_PAGE_URL.to_string(),
         };
         self.run_open_action("Open releases page failed", move || {
             platform::open_url(&release_url)
         });
+    }
+
+    fn skip_available_update(&mut self) {
+        let UpdateStatus::Available(info) = self.update_status.clone() else {
+            return;
+        };
+
+        if let Err(error) = update::skip_version(&self.paths, &info) {
+            self.last_status = format!("Skip update failed: {error}");
+            append_log(&self.paths, &self.last_status);
+        } else {
+            self.last_status = format!("Skipped update {}", info.version);
+            self.update_status = UpdateStatus::Skipped(info);
+        }
+        self.update_ui();
     }
 
     fn handle_menu_event(&mut self, event_loop: &ActiveEventLoop, event: MenuEvent) {
@@ -709,6 +748,8 @@ impl App {
             self.maybe_check_for_updates(true);
         } else if event.id == *menu.download_update.id() {
             self.open_latest_release();
+        } else if event.id == *menu.skip_update.id() {
+            self.skip_available_update();
         } else if event.id == *menu.open_drive.id() {
             self.open_drive_root();
         } else if event.id == *menu.open_shadow.id() {
@@ -779,6 +820,11 @@ impl App {
             menu.progress.set_text(self.menu_progress_text());
             menu.update_status.set_text(self.menu_update_text());
             menu.download_update
+                .set_enabled(matches!(
+                    self.update_status,
+                    UpdateStatus::Available(_) | UpdateStatus::Skipped(_)
+                ));
+            menu.skip_update
                 .set_enabled(matches!(self.update_status, UpdateStatus::Available(_)));
             menu.sync_from_usb_now
                 .set_enabled(config_loaded && self.drive_present && !self.syncing);
@@ -861,6 +907,7 @@ impl App {
             UpdateStatus::Idle => format!("Update: {}", env!("CARGO_PKG_VERSION")),
             UpdateStatus::Checking => "Update: checking...".to_string(),
             UpdateStatus::Available(info) => format!("Update: {} available", info.version),
+            UpdateStatus::Skipped(info) => format!("Update: {} skipped", info.version),
             UpdateStatus::Current => format!("Update: current ({})", env!("CARGO_PKG_VERSION")),
             UpdateStatus::Error => "Update: check failed".to_string(),
         }
@@ -871,6 +918,8 @@ impl App {
             "Opening Setup Wizard...".to_string()
         } else if let UpdateStatus::Available(info) = &self.update_status {
             format!("Update available - {}", info.version)
+        } else if matches!(self.update_status, UpdateStatus::Skipped(_)) {
+            "Update skipped".to_string()
         } else if matches!(self.update_status, UpdateStatus::Error) {
             "Update check failed".to_string()
         } else if self.config_error.is_some() {
@@ -1014,6 +1063,7 @@ struct AppMenu {
     setup_wizard: MenuItem,
     check_updates: MenuItem,
     download_update: MenuItem,
+    skip_update: MenuItem,
     open_drive: MenuItem,
     open_shadow: MenuItem,
     open_config: MenuItem,
@@ -1034,6 +1084,7 @@ impl AppMenu {
         let setup_wizard = MenuItem::new("Setup Wizard", true, None);
         let check_updates = MenuItem::new("Check for updates", true, None);
         let download_update = MenuItem::new("Download latest release", false, None);
+        let skip_update = MenuItem::new("Skip this version", false, None);
         let open_drive = MenuItem::new("Open mounted drive", false, None);
         let open_shadow = MenuItem::new("Open shadow cache", false, None);
         let open_config = MenuItem::new("Open raw config", true, None);
@@ -1056,6 +1107,7 @@ impl AppMenu {
             &setup_wizard,
             &check_updates,
             &download_update,
+            &skip_update,
             &open_drive,
             &open_shadow,
             &open_config,
@@ -1082,6 +1134,7 @@ impl AppMenu {
                 setup_wizard,
                 check_updates,
                 download_update,
+                skip_update,
                 open_drive,
                 open_shadow,
                 open_config,

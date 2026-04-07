@@ -30,8 +30,15 @@ pub struct UpdateCheckOutcome {
 #[derive(Debug, Clone)]
 pub enum UpdateCheckState {
     Available(UpdateInfo),
+    Skipped(UpdateInfo),
     UpToDate,
     Error(String),
+}
+
+#[derive(Debug, Clone)]
+pub enum CachedUpdateStatus {
+    Available(UpdateInfo),
+    Skipped(UpdateInfo),
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -42,6 +49,8 @@ struct CachedUpdateState {
     latest_version: Option<String>,
     #[serde(default)]
     release_url: Option<String>,
+    #[serde(default)]
+    skipped_version: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -52,14 +61,24 @@ struct GitHubRelease {
     draft: bool,
 }
 
-pub fn load_cached_available_update(paths: &AppPaths, current_version: &str) -> Option<UpdateInfo> {
+pub fn load_cached_update_status(
+    paths: &AppPaths,
+    current_version: &str,
+) -> Option<CachedUpdateStatus> {
     let state = read_cached_state(paths).ok()?;
     let version = state.latest_version?;
     let release_url = state.release_url?;
+    let is_skipped = state.skipped_version.as_deref() == Some(version.as_str());
 
-    is_newer_version(&version, current_version).then_some(UpdateInfo {
+    let info = is_newer_version(&version, current_version).then_some(UpdateInfo {
         version,
         release_url,
+    })?;
+
+    Some(if is_skipped {
+        CachedUpdateStatus::Skipped(info)
+    } else {
+        CachedUpdateStatus::Available(info)
     })
 }
 
@@ -80,19 +99,28 @@ pub fn check_for_updates(
     current_version: &str,
     manual: bool,
 ) -> UpdateCheckOutcome {
+    let cached_state = read_cached_state(paths).unwrap_or_default();
+    let skipped_version = cached_state.skipped_version.clone();
+
     match fetch_latest_release(current_version) {
         Ok(Some(info)) => {
+            let is_skipped = skipped_version.as_deref() == Some(info.version.as_str());
             let _ = write_cached_state(
                 paths,
                 CachedUpdateState {
                     last_checked_at: current_unix_timestamp(),
                     latest_version: Some(info.version.clone()),
                     release_url: Some(info.release_url.clone()),
+                    skipped_version: if is_skipped { skipped_version } else { None },
                 },
             );
             UpdateCheckOutcome {
                 manual,
-                state: UpdateCheckState::Available(info),
+                state: if is_skipped {
+                    UpdateCheckState::Skipped(info)
+                } else {
+                    UpdateCheckState::Available(info)
+                },
             }
         }
         Ok(None) => {
@@ -102,6 +130,7 @@ pub fn check_for_updates(
                     last_checked_at: current_unix_timestamp(),
                     latest_version: None,
                     release_url: None,
+                    skipped_version,
                 },
             );
             UpdateCheckOutcome {
@@ -114,6 +143,15 @@ pub fn check_for_updates(
             state: UpdateCheckState::Error(error.to_string()),
         },
     }
+}
+
+pub fn skip_version(paths: &AppPaths, info: &UpdateInfo) -> Result<()> {
+    let mut state = read_cached_state(paths).unwrap_or_default();
+    state.last_checked_at = current_unix_timestamp();
+    state.latest_version = Some(info.version.clone());
+    state.release_url = Some(info.release_url.clone());
+    state.skipped_version = Some(info.version.clone());
+    write_cached_state(paths, state)
 }
 
 fn fetch_latest_release(current_version: &str) -> Result<Option<UpdateInfo>> {
@@ -133,15 +171,13 @@ fn fetch_latest_release(current_version: &str) -> Result<Option<UpdateInfo>> {
         .json::<Vec<GitHubRelease>>()
         .context("failed to parse the GitHub release response")?;
 
-    let Some(release) = releases.into_iter().find(|release| !release.draft) else {
+    let current = Version::parse(current_version)
+        .with_context(|| format!("failed to parse current version {current_version}"))?;
+    let Some(release) = select_update_candidate(releases, &current) else {
         return Ok(None);
     };
 
     let version = normalize_tag(&release.tag_name);
-    if !is_newer_version(&version, current_version) {
-        return Ok(None);
-    }
-
     Ok(Some(UpdateInfo {
         version,
         release_url: release.html_url,
@@ -150,6 +186,29 @@ fn fetch_latest_release(current_version: &str) -> Result<Option<UpdateInfo>> {
 
 fn normalize_tag(tag_name: &str) -> String {
     tag_name.trim().trim_start_matches('v').to_string()
+}
+
+fn select_update_candidate(
+    releases: Vec<GitHubRelease>,
+    current_version: &Version,
+) -> Option<GitHubRelease> {
+    releases
+        .into_iter()
+        .filter(|release| !release.draft)
+        .filter_map(|release| {
+            let version = Version::parse(&normalize_tag(&release.tag_name)).ok()?;
+            Some((version, release))
+        })
+        .filter(|(candidate, _)| should_offer_release(candidate, current_version))
+        .max_by(|(left, _), (right, _)| left.cmp(right))
+        .map(|(_, release)| release)
+}
+
+fn should_offer_release(candidate: &Version, current: &Version) -> bool {
+    if current.pre.is_empty() && !candidate.pre.is_empty() {
+        return false;
+    }
+    candidate > current
 }
 
 fn is_newer_version(candidate: &str, current: &str) -> bool {
@@ -198,5 +257,49 @@ mod tests {
     fn leading_v_is_trimmed_from_tags() {
         assert_eq!(normalize_tag("v1.2.3"), "1.2.3");
         assert_eq!(normalize_tag("1.2.3"), "1.2.3");
+    }
+
+    #[test]
+    fn stable_build_ignores_newer_prerelease_tags() {
+        let releases = vec![
+            GitHubRelease {
+                tag_name: "0.1.2-pre".to_string(),
+                html_url: "https://example.com/pre".to_string(),
+                draft: false,
+            },
+            GitHubRelease {
+                tag_name: "0.1.1".to_string(),
+                html_url: "https://example.com/stable".to_string(),
+                draft: false,
+            },
+        ];
+
+        let selected = select_update_candidate(releases, &Version::parse("0.1.1").unwrap());
+        assert!(selected.is_none());
+    }
+
+    #[test]
+    fn highest_valid_release_is_selected() {
+        let releases = vec![
+            GitHubRelease {
+                tag_name: "0.1.2".to_string(),
+                html_url: "https://example.com/one".to_string(),
+                draft: false,
+            },
+            GitHubRelease {
+                tag_name: "0.1.4".to_string(),
+                html_url: "https://example.com/two".to_string(),
+                draft: false,
+            },
+            GitHubRelease {
+                tag_name: "0.1.3".to_string(),
+                html_url: "https://example.com/three".to_string(),
+                draft: false,
+            },
+        ];
+
+        let selected = select_update_candidate(releases, &Version::parse("0.1.1").unwrap())
+            .expect("a newer release should be selected");
+        assert_eq!(selected.tag_name, "0.1.4");
     }
 }

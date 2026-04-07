@@ -11,6 +11,12 @@ pub enum AlreadyRunningChoice {
     Cancel,
 }
 
+pub enum UpdatePromptChoice {
+    OpenRelease,
+    RemindLater,
+    SkipVersion,
+}
+
 pub fn configure_process() {
     #[cfg(target_os = "windows")]
     configure_process_windows_dpi();
@@ -101,19 +107,35 @@ pub fn show_already_running_prompt() -> AlreadyRunningChoice {
     }
 }
 
-pub fn prompt_for_update(current_version: &str, latest_version: &str) -> bool {
+pub fn prompt_for_update(current_version: &str, latest_version: &str) -> UpdatePromptChoice {
     let description = format!(
-        "ShadowSync {latest_version} is available.\n\nYou are running {current_version}.\n\nOpen the GitHub Releases page now?"
+        "ShadowSync {latest_version} is available.\n\nYou are running {current_version}.\n\nOpen the GitHub Releases page now, remind later, or skip this version?"
     );
-    matches!(
-        MessageDialog::new()
-            .set_level(MessageLevel::Info)
-            .set_title("ShadowSync Update Available")
-            .set_description(description)
-            .set_buttons(MessageButtons::YesNo)
-            .show(),
-        MessageDialogResult::Yes
-    )
+    match MessageDialog::new()
+        .set_level(MessageLevel::Info)
+        .set_title("ShadowSync Update Available")
+        .set_description(description)
+        .set_buttons(MessageButtons::YesNoCancelCustom(
+            "Open release".to_string(),
+            "Later".to_string(),
+            "Skip this version".to_string(),
+        ))
+        .show()
+    {
+        MessageDialogResult::Yes => UpdatePromptChoice::OpenRelease,
+        MessageDialogResult::No => UpdatePromptChoice::RemindLater,
+        MessageDialogResult::Cancel => UpdatePromptChoice::SkipVersion,
+        MessageDialogResult::Custom(choice) if choice == "Open release" => {
+            UpdatePromptChoice::OpenRelease
+        }
+        MessageDialogResult::Custom(choice) if choice == "Later" => {
+            UpdatePromptChoice::RemindLater
+        }
+        MessageDialogResult::Custom(choice) if choice == "Skip this version" => {
+            UpdatePromptChoice::SkipVersion
+        }
+        _ => UpdatePromptChoice::RemindLater,
+    }
 }
 
 pub fn show_wizard_loading_indicator(signal_path: &Path) -> Result<()> {
