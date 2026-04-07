@@ -1,5 +1,6 @@
 use std::env;
 use std::fs;
+use std::path::Component;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -9,7 +10,7 @@ use eframe::egui;
 use rfd::FileDialog;
 use serde_json::Value;
 
-use crate::config::{AppConfig, AppPaths, JobConfig, default_config_template, load_config, rel_path_string};
+use crate::config::{AppConfig, AppPaths, JobConfig, default_config_template, load_config};
 use crate::platform;
 
 const WIZARD_FLAG: &str = "--wizard";
@@ -280,7 +281,7 @@ impl WizardApp {
 
     fn validate_and_save(&mut self) -> Result<()> {
         append_wizard_log(&self.paths, "Validating wizard configuration");
-        let config = self.normalized_config_for_save();
+        let config = self.normalized_config_for_save()?;
         let serialized = serde_json::to_string_pretty(&config)
             .context("failed to serialize config.json")?;
 
@@ -309,19 +310,21 @@ impl WizardApp {
         Ok(())
     }
 
-    fn normalized_config_for_save(&self) -> AppConfig {
+    fn normalized_config_for_save(&self) -> Result<AppConfig> {
         let mut config = self.config.clone();
         normalize_optional_string(&mut config.drive.letter);
         normalize_optional_string(&mut config.drive.path);
         normalize_optional_string(&mut config.cache.root);
+        let drive_root = drive_root_from_config(&config);
 
         for job in &mut config.jobs {
             job.name = job.name.trim().to_string();
-            job.source = job.source.trim().to_string();
+            job.source = normalize_job_source_text(&job.source, drive_root.as_deref())
+                .with_context(|| format!("job '{}' source is invalid", job.name.trim()))?;
             job.target = job.target.trim().to_string();
         }
 
-        config
+        Ok(config)
     }
 
     fn current_drive_root(&self) -> Option<PathBuf> {
@@ -372,16 +375,13 @@ impl WizardApp {
 
         let picker = FileDialog::new().set_directory(&root);
         if let Some(folder) = picker.pick_folder() {
-            match folder.strip_prefix(&root) {
-                Ok(relative) => match rel_path_string(relative) {
-                    Ok(value) => self.config.jobs[index].source = value,
-                    Err(error) => self.status = format!("Source browse failed: {error}"),
-                },
-                Err(_) => {
-                    self.status = format!(
-                        "The selected folder must stay inside the configured drive root {}",
-                        root.display()
-                    );
+            match normalize_job_source_from_path(&folder, &root) {
+                Ok(value) => {
+                    self.config.jobs[index].source = value;
+                    self.status = format!("Selected {}", folder.display());
+                }
+                Err(error) => {
+                    self.status = format!("Source browse failed: {error}");
                 }
             }
         }
@@ -485,6 +485,131 @@ impl WizardApp {
             }
         }
     }
+}
+
+fn drive_root_from_config(config: &AppConfig) -> Option<PathBuf> {
+    if let Some(path) = config
+        .drive
+        .path
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        return Some(PathBuf::from(path));
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let letter = config
+            .drive
+            .letter
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())?;
+        return Some(PathBuf::from(format!("{}:\\", letter.trim_end_matches(':'))));
+    }
+
+    #[allow(unreachable_code)]
+    None
+}
+
+fn normalize_job_source_from_path(path: &Path, root: &Path) -> Result<String> {
+    let relative = strip_root_prefix_normalized(path, root).ok_or_else(|| {
+        anyhow::anyhow!(
+            "the selected folder must stay inside the configured drive root {}",
+            root.display()
+        )
+    })?;
+    native_relative_path_string(&relative)
+}
+
+fn normalize_job_source_text(value: &str, root: Option<&Path>) -> Result<String> {
+    let trimmed = value.trim();
+    anyhow::ensure!(!trimmed.is_empty(), "source path must not be empty");
+
+    let candidate = PathBuf::from(trimmed);
+    if candidate.is_absolute() {
+        let root = root.ok_or_else(|| {
+            anyhow::anyhow!("set the USB root first before using an absolute source path")
+        })?;
+        return normalize_job_source_from_path(&candidate, root);
+    }
+
+    let mut normalized = PathBuf::new();
+    for part in trimmed.split(['/', '\\']).filter(|part| !part.is_empty()) {
+        match part {
+            "." => {}
+            ".." => anyhow::bail!("source path must stay inside the USB root"),
+            _ => normalized.push(part),
+        }
+    }
+
+    anyhow::ensure!(
+        !normalized.as_os_str().is_empty(),
+        "source path must not collapse to an empty value"
+    );
+    native_relative_path_string(&normalized)
+}
+
+fn native_relative_path_string(path: &Path) -> Result<String> {
+    let mut parts = Vec::new();
+    for component in path.components() {
+        match component {
+            Component::Normal(part) => parts.push(part.to_string_lossy().to_string()),
+            _ => anyhow::bail!("path contains a non-normal component: {}", path.display()),
+        }
+    }
+
+    anyhow::ensure!(!parts.is_empty(), "path must not be empty");
+    Ok(parts.join(std::path::MAIN_SEPARATOR_STR))
+}
+
+fn strip_root_prefix_normalized(path: &Path, root: &Path) -> Option<PathBuf> {
+    let path_parts = normalized_path_parts(path)?;
+    let root_parts = normalized_path_parts(root)?;
+    if path_parts.len() < root_parts.len() {
+        return None;
+    }
+    if !path_parts
+        .iter()
+        .zip(root_parts.iter())
+        .all(|(path_part, root_part)| path_part_matches(path_part, root_part))
+    {
+        return None;
+    }
+
+    Some(
+        path_parts[root_parts.len()..]
+            .iter()
+            .fold(PathBuf::new(), |mut path, part| {
+                path.push(part);
+                path
+            }),
+    )
+}
+
+fn normalized_path_parts(path: &Path) -> Option<Vec<String>> {
+    let mut parts = Vec::new();
+    for component in path.components() {
+        match component {
+            Component::Prefix(prefix) => parts.push(prefix.as_os_str().to_string_lossy().to_string()),
+            Component::RootDir => {}
+            Component::CurDir => {}
+            Component::Normal(part) => parts.push(part.to_string_lossy().to_string()),
+            Component::ParentDir => return None,
+        }
+    }
+    Some(parts)
+}
+
+#[cfg(target_os = "windows")]
+fn path_part_matches(path_part: &str, root_part: &str) -> bool {
+    path_part.eq_ignore_ascii_case(root_part)
+}
+
+#[cfg(not(target_os = "windows"))]
+fn path_part_matches(path_part: &str, root_part: &str) -> bool {
+    path_part == root_part
 }
 
 impl eframe::App for WizardApp {
@@ -1433,5 +1558,26 @@ mod tests {
         };
 
         assert!(first_missing_target_prompt(&config).is_none());
+    }
+
+    #[test]
+    fn normalize_job_source_text_accepts_nested_relative_windows_path() {
+        let value =
+            normalize_job_source_text(r"Projects\Folder_Alpha", Some(Path::new(r"S:\"))).unwrap();
+        assert_eq!(value, r"Projects\Folder_Alpha");
+    }
+
+    #[test]
+    fn normalize_job_source_text_converts_absolute_path_under_root() {
+        let value =
+            normalize_job_source_text(r"S:\Projects\Folder_Alpha", Some(Path::new(r"S:\")))
+                .unwrap();
+        assert_eq!(value, r"Projects\Folder_Alpha");
+    }
+
+    #[test]
+    fn normalize_job_source_from_path_rejects_folder_outside_root() {
+        let result = normalize_job_source_from_path(Path::new(r"T:\Other\Folder"), Path::new(r"S:\"));
+        assert!(result.is_err());
     }
 }
