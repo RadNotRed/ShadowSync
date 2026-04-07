@@ -2,6 +2,10 @@
   #define AppVersion "0.1.0"
 #endif
 
+#ifndef AppIdValue
+  #define AppIdValue "Rad.ShadowSync"
+#endif
+
 #ifndef SourceExe
   #define SourceExe "..\..\target\release\shadowsync.exe"
 #endif
@@ -27,7 +31,7 @@
 #endif
 
 [Setup]
-AppId=Rad.ShadowSync
+AppId={#AppIdValue}
 AppName=ShadowSync
 AppVersion={#AppVersion}
 AppPublisher=Rad
@@ -67,3 +71,33 @@ Name: "{userstartup}\ShadowSync"; Filename: "{app}\shadowsync.exe"; IconFilename
 
 [Run]
 Filename: "{app}\shadowsync.exe"; Description: "Launch ShadowSync"; Flags: nowait postinstall skipifsilent
+
+[Code]
+function TryGetInstalledVersion(var InstalledVersion: String): Boolean;
+begin
+  Result :=
+    RegQueryStringValue(HKCU, 'Software\Microsoft\Windows\CurrentVersion\Uninstall\{#AppIdValue}_is1', 'DisplayVersion', InstalledVersion) or
+    RegQueryStringValue(HKLM, 'Software\Microsoft\Windows\CurrentVersion\Uninstall\{#AppIdValue}_is1', 'DisplayVersion', InstalledVersion);
+end;
+
+function InitializeSetup(): Boolean;
+var
+  InstalledVersion: String;
+  PromptText: String;
+begin
+  Result := True;
+  if not TryGetInstalledVersion(InstalledVersion) then
+    exit;
+
+  if InstalledVersion = '{#AppVersion}' then begin
+    PromptText :=
+      'ShadowSync version {#AppVersion} is already installed.' + #13#10#13#10 +
+      'Continue to repair/reinstall this version?';
+  end else begin
+    PromptText :=
+      'ShadowSync version ' + InstalledVersion + ' is already installed.' + #13#10#13#10 +
+      'Continue and replace it with version {#AppVersion}?';
+  end;
+
+  Result := MsgBox(PromptText, mbConfirmation, MB_YESNO) = IDYES;
+end;

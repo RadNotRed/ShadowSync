@@ -5,6 +5,7 @@ mod config;
 mod platform;
 mod single_instance;
 mod sync_engine;
+mod update;
 mod watcher;
 mod wizard;
 fn main() -> anyhow::Result<()> {

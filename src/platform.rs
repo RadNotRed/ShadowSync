@@ -59,6 +59,23 @@ pub fn open_path(path: &Path) -> Result<()> {
     Err(anyhow!("opening paths is not implemented for this operating system"))
 }
 
+pub fn open_url(url: &str) -> Result<()> {
+    #[cfg(target_os = "windows")]
+    {
+        return run_hidden("explorer.exe", &[url]);
+    }
+    #[cfg(target_os = "macos")]
+    {
+        return run_status("open", &[url]);
+    }
+    #[cfg(target_os = "linux")]
+    {
+        return run_status("xdg-open", &[url]);
+    }
+    #[allow(unreachable_code)]
+    Err(anyhow!("opening URLs is not implemented for this operating system"))
+}
+
 pub fn open_in_file_manager(path: &Path) -> Result<()> {
     if path.is_dir() {
         open_path(path)
@@ -82,6 +99,21 @@ pub fn show_already_running_prompt() -> AlreadyRunningChoice {
         MessageDialogResult::Ok | MessageDialogResult::Yes => AlreadyRunningChoice::Retry,
         _ => AlreadyRunningChoice::Cancel,
     }
+}
+
+pub fn prompt_for_update(current_version: &str, latest_version: &str) -> bool {
+    let description = format!(
+        "ShadowSync {latest_version} is available.\n\nYou are running {current_version}.\n\nOpen the GitHub Releases page now?"
+    );
+    matches!(
+        MessageDialog::new()
+            .set_level(MessageLevel::Info)
+            .set_title("ShadowSync Update Available")
+            .set_description(description)
+            .set_buttons(MessageButtons::YesNo)
+            .show(),
+        MessageDialogResult::Yes
+    )
 }
 
 pub fn sleep_short(duration: Duration) {

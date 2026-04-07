@@ -16,6 +16,7 @@ use crate::sync_engine::{
     SyncPhase, SyncProgress, SyncReport, clear_shadow_cache, run_sync_to_usb_with_progress,
     run_sync_with_progress,
 };
+use crate::update::{self, UpdateCheckOutcome, UpdateCheckState, UpdateInfo};
 use crate::watcher::{ChangeWatcher, WatchKind};
 use crate::wizard;
 use crate::platform;
@@ -59,6 +60,7 @@ enum UserEvent {
     Menu(MenuEvent),
     SyncProgress(SyncProgress),
     SyncFinished(Result<SyncReport, String>),
+    UpdateCheckFinished(UpdateCheckOutcome),
     WatchedChange(WatchKind),
 }
 
@@ -113,6 +115,15 @@ struct ActiveSync {
     trigger: SyncTrigger,
 }
 
+#[derive(Debug, Clone)]
+enum UpdateStatus {
+    Idle,
+    Checking,
+    Available(UpdateInfo),
+    Current,
+    Error(String),
+}
+
 struct App {
     paths: AppPaths,
     proxy: EventLoopProxy<UserEvent>,
@@ -134,6 +145,7 @@ struct App {
     pending_pull_sync: bool,
     pending_push_sync: bool,
     wizard_launch_feedback_until: Option<Instant>,
+    update_status: UpdateStatus,
 }
 
 impl App {
@@ -163,6 +175,7 @@ impl App {
             pending_pull_sync: false,
             pending_push_sync: false,
             wizard_launch_feedback_until: None,
+            update_status: UpdateStatus::Idle,
         }
     }
 
@@ -171,7 +184,9 @@ impl App {
         self.update_drive_presence();
         self.maybe_auto_sync();
         self.refresh_watchers();
+        self.restore_cached_update_status();
         self.update_ui();
+        self.maybe_check_for_updates(false);
     }
 
     fn reset_watchers(&mut self) {
@@ -215,6 +230,61 @@ impl App {
     fn is_wizard_launch_feedback_active(&self) -> bool {
         self.wizard_launch_feedback_until
             .is_some_and(|until| Instant::now() < until)
+    }
+
+    fn restore_cached_update_status(&mut self) {
+        self.update_status = update::load_cached_available_update(&self.paths, env!("CARGO_PKG_VERSION"))
+            .map(UpdateStatus::Available)
+            .unwrap_or(UpdateStatus::Idle);
+    }
+
+    fn maybe_check_for_updates(&mut self, manual: bool) {
+        if matches!(self.update_status, UpdateStatus::Checking) {
+            return;
+        }
+        if !manual && !update::should_check_automatically(&self.paths) {
+            return;
+        }
+
+        self.update_status = UpdateStatus::Checking;
+        self.update_ui();
+
+        let paths = self.paths.clone();
+        let proxy = self.proxy.clone();
+        thread::spawn(move || {
+            let outcome = update::check_for_updates(&paths, env!("CARGO_PKG_VERSION"), manual);
+            let _ = proxy.send_event(UserEvent::UpdateCheckFinished(outcome));
+        });
+    }
+
+    fn handle_update_check_finished(&mut self, outcome: UpdateCheckOutcome) {
+        match outcome.state {
+            UpdateCheckState::Available(info) => {
+                self.last_status = format!("Update available: {}", info.version);
+                self.update_status = UpdateStatus::Available(info.clone());
+                if platform::prompt_for_update(env!("CARGO_PKG_VERSION"), &info.version)
+                    && let Err(error) = platform::open_url(&info.release_url)
+                {
+                    self.last_status = format!("Open update page failed: {error}");
+                    append_log(&self.paths, &self.last_status);
+                }
+            }
+            UpdateCheckState::UpToDate => {
+                self.update_status = UpdateStatus::Current;
+                if outcome.manual {
+                    self.last_status = format!("ShadowSync {} is up to date", env!("CARGO_PKG_VERSION"));
+                }
+            }
+            UpdateCheckState::Error(error) => {
+                self.update_status = UpdateStatus::Error(error.clone());
+                if outcome.manual {
+                    self.last_status = format!("Update check failed: {error}");
+                }
+                append_log(&self.paths, format!("Update check failed: {error}"));
+            }
+        }
+
+        self.update_ui();
     }
 
     fn reload_config(&mut self, force: bool) {
@@ -612,6 +682,16 @@ impl App {
         });
     }
 
+    fn open_latest_release(&mut self) {
+        let release_url = match &self.update_status {
+            UpdateStatus::Available(info) => info.release_url.clone(),
+            _ => update::RELEASES_PAGE_URL.to_string(),
+        };
+        self.run_open_action("Open releases page failed", move || {
+            platform::open_url(&release_url)
+        });
+    }
+
     fn handle_menu_event(&mut self, event_loop: &ActiveEventLoop, event: MenuEvent) {
         let Some(menu) = self.menu.as_ref() else {
             return;
@@ -625,6 +705,10 @@ impl App {
             self.eject_now();
         } else if event.id == *menu.setup_wizard.id() {
             self.open_setup_wizard();
+        } else if event.id == *menu.check_updates.id() {
+            self.maybe_check_for_updates(true);
+        } else if event.id == *menu.download_update.id() {
+            self.open_latest_release();
         } else if event.id == *menu.open_drive.id() {
             self.open_drive_root();
         } else if event.id == *menu.open_shadow.id() {
@@ -693,6 +777,9 @@ impl App {
             let config_loaded = self.config.is_some();
             menu.status.set_text(self.menu_status_text());
             menu.progress.set_text(self.menu_progress_text());
+            menu.update_status.set_text(self.menu_update_text());
+            menu.download_update
+                .set_enabled(matches!(self.update_status, UpdateStatus::Available(_)));
             menu.sync_from_usb_now
                 .set_enabled(config_loaded && self.drive_present && !self.syncing);
             menu.sync_to_usb_now
@@ -769,9 +856,23 @@ impl App {
         }
     }
 
+    fn menu_update_text(&self) -> String {
+        match &self.update_status {
+            UpdateStatus::Idle => format!("Update: {}", env!("CARGO_PKG_VERSION")),
+            UpdateStatus::Checking => "Update: checking...".to_string(),
+            UpdateStatus::Available(info) => format!("Update: {} available", info.version),
+            UpdateStatus::Current => format!("Update: current ({})", env!("CARGO_PKG_VERSION")),
+            UpdateStatus::Error(_) => "Update: check failed".to_string(),
+        }
+    }
+
     fn tooltip_state_summary(&self) -> String {
         if self.is_wizard_launch_feedback_active() {
             "Opening Setup Wizard...".to_string()
+        } else if let UpdateStatus::Available(info) = &self.update_status {
+            format!("Update available - {}", info.version)
+        } else if let UpdateStatus::Error(error) = &self.update_status {
+            truncate(&format!("Update check failed: {error}"), 44)
         } else if self.config_error.is_some() {
             "Config error - open Setup Wizard".to_string()
         } else if self.syncing {
@@ -889,6 +990,7 @@ impl ApplicationHandler<UserEvent> for App {
             UserEvent::Menu(event) => self.handle_menu_event(event_loop, event),
             UserEvent::SyncProgress(progress) => self.handle_sync_progress(progress),
             UserEvent::SyncFinished(result) => self.handle_sync_finished(result),
+            UserEvent::UpdateCheckFinished(outcome) => self.handle_update_check_finished(outcome),
             UserEvent::WatchedChange(kind) => self.handle_watched_change(kind),
         }
     }
@@ -905,10 +1007,13 @@ impl ApplicationHandler<UserEvent> for App {
 struct AppMenu {
     status: MenuItem,
     progress: MenuItem,
+    update_status: MenuItem,
     sync_from_usb_now: MenuItem,
     sync_to_usb_now: MenuItem,
     eject_now: MenuItem,
     setup_wizard: MenuItem,
+    check_updates: MenuItem,
+    download_update: MenuItem,
     open_drive: MenuItem,
     open_shadow: MenuItem,
     open_config: MenuItem,
@@ -922,10 +1027,13 @@ impl AppMenu {
         let menu = Menu::new();
         let status = MenuItem::new("Status: Starting", false, None);
         let progress = MenuItem::new("Progress: Idle", false, None);
+        let update_status = MenuItem::new("Update: idle", false, None);
         let sync_from_usb_now = MenuItem::new("Sync from USB now", false, None);
         let sync_to_usb_now = MenuItem::new("Sync to USB now", false, None);
         let eject_now = MenuItem::new("Eject drive", false, None);
         let setup_wizard = MenuItem::new("Setup Wizard", true, None);
+        let check_updates = MenuItem::new("Check for updates", true, None);
+        let download_update = MenuItem::new("Download latest release", false, None);
         let open_drive = MenuItem::new("Open mounted drive", false, None);
         let open_shadow = MenuItem::new("Open shadow cache", false, None);
         let open_config = MenuItem::new("Open raw config", true, None);
@@ -939,12 +1047,15 @@ impl AppMenu {
         menu.append_items(&[
             &status,
             &progress,
+            &update_status,
             &separator_1,
             &sync_from_usb_now,
             &sync_to_usb_now,
             &eject_now,
             &separator_2,
             &setup_wizard,
+            &check_updates,
+            &download_update,
             &open_drive,
             &open_shadow,
             &open_config,
@@ -964,10 +1075,13 @@ impl AppMenu {
             Self {
                 status,
                 progress,
+                update_status,
                 sync_from_usb_now,
                 sync_to_usb_now,
                 eject_now,
                 setup_wizard,
+                check_updates,
+                download_update,
                 open_drive,
                 open_shadow,
                 open_config,
