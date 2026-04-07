@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use tray_icon::menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem};
@@ -133,6 +133,7 @@ struct App {
     watcher_key: Option<String>,
     pending_pull_sync: bool,
     pending_push_sync: bool,
+    wizard_launch_feedback_until: Option<Instant>,
 }
 
 impl App {
@@ -161,6 +162,7 @@ impl App {
             watcher_key: None,
             pending_pull_sync: false,
             pending_push_sync: false,
+            wizard_launch_feedback_until: None,
         }
     }
 
@@ -197,6 +199,22 @@ impl App {
             append_log(&self.paths, &self.last_status);
             self.update_ui();
         }
+    }
+
+    fn note_wizard_launch(&mut self) {
+        self.wizard_launch_feedback_until = Some(Instant::now() + Duration::from_secs(6));
+        self.update_ui();
+    }
+
+    fn clear_expired_feedback(&mut self) {
+        if !self.is_wizard_launch_feedback_active() {
+            self.wizard_launch_feedback_until = None;
+        }
+    }
+
+    fn is_wizard_launch_feedback_active(&self) -> bool {
+        self.wizard_launch_feedback_until
+            .is_some_and(|until| Instant::now() < until)
     }
 
     fn reload_config(&mut self, force: bool) {
@@ -247,9 +265,10 @@ impl App {
             Ok(()) => {
                 self.auto_opened_error_key = Some(error_key);
                 self.config_stamp = None;
-                self.last_status = "Config issue detected. Setup Wizard opened.".to_string();
+                self.note_wizard_launch();
             }
             Err(error) => {
+                self.wizard_launch_feedback_until = None;
                 let launch_message = format!("Setup wizard auto-open failed: {error}");
                 append_log(&self.paths, &launch_message);
                 self.last_status = launch_message;
@@ -577,7 +596,9 @@ impl App {
     }
 
     fn open_setup_wizard(&mut self) {
+        self.note_wizard_launch();
         if let Err(error) = wizard::open_setup_wizard(&self.paths) {
+            self.wizard_launch_feedback_until = None;
             self.last_status = format!("Setup wizard failed: {error}");
             append_log(&self.paths, &self.last_status);
             self.update_ui();
@@ -666,6 +687,8 @@ impl App {
     }
 
     fn update_ui(&mut self) {
+        self.clear_expired_feedback();
+
         if let Some(menu) = self.menu.as_ref() {
             let config_loaded = self.config.is_some();
             menu.status.set_text(self.menu_status_text());
@@ -693,29 +716,16 @@ impl App {
 
     fn tooltip_text(&self) -> String {
         if let Some(progress) = self.sync_progress.as_ref() {
-            return format!(
-                "ShadowSync\n{}\n{}",
-                self.tooltip_progress_headline(progress),
-                self.tooltip_progress_detail(progress)
-            );
+            return format!("ShadowSync\n{}", self.tooltip_progress_summary(progress));
         }
 
-        if let Some(error) = self.config_error.as_ref() {
-            format!(
-                "ShadowSync\nConfig error\n{}",
-                truncate(error, 48)
-            )
-        } else {
-            format!(
-                "ShadowSync\n{}\n{}",
-                self.tooltip_drive_line(),
-                self.tooltip_status_line()
-            )
-        }
+        format!("ShadowSync\n{}", self.tooltip_state_summary())
     }
 
     fn menu_status_text(&self) -> String {
-        if self.config_error.is_some() {
+        if self.is_wizard_launch_feedback_active() {
+            "State: Opening Setup Wizard".to_string()
+        } else if self.config_error.is_some() {
             "State: Config error".to_string()
         } else if self.syncing {
             let active_sync = self.active_sync.unwrap_or(ActiveSync {
@@ -744,6 +754,8 @@ impl App {
                         format!("{}/{}", progress.operations_done, progress.operations_total)
                     })
             )
+        } else if self.is_wizard_launch_feedback_active() {
+            "Detail: Opening Setup Wizard".to_string()
         } else if self.config_error.is_some() {
             "Detail: Open Setup Wizard".to_string()
         } else if !self.drive_present {
@@ -757,29 +769,36 @@ impl App {
         }
     }
 
-    fn tooltip_drive_line(&self) -> String {
-        self.config
-            .as_ref()
-            .map(|config| {
-                format!(
-                    "USB {}: {}",
-                    config.drive_label,
-                    if self.drive_present { "ready" } else { "missing" }
-                )
-            })
-            .unwrap_or_else(|| "USB: not configured".to_string())
+    fn tooltip_state_summary(&self) -> String {
+        if self.is_wizard_launch_feedback_active() {
+            "Opening Setup Wizard...".to_string()
+        } else if self.config_error.is_some() {
+            "Config error - open Setup Wizard".to_string()
+        } else if self.syncing {
+            self.active_sync
+                .map(|active| active.direction.syncing_text().to_string())
+                .unwrap_or_else(|| "Syncing".to_string())
+        } else if !self.drive_present {
+            "USB missing".to_string()
+        } else if self.last_status.starts_with("Drive ") {
+            "USB ready".to_string()
+        } else if self.last_status.starts_with("Watching ") {
+            "USB ready - watching changes".to_string()
+        } else if self.last_status.starts_with("Last sync ") {
+            "USB ready - last sync completed".to_string()
+        } else if self.last_status == "Config loaded" {
+            "USB ready - ready".to_string()
+        } else {
+            truncate(&self.last_status, 44)
+        }
     }
 
-    fn tooltip_status_line(&self) -> String {
-        if self.config_error.is_some() {
-            "Open Setup Wizard to repair the config.".to_string()
-        } else if self.last_status.starts_with("Last sync ") {
-            "Last sync completed.".to_string()
-        } else if self.last_status.starts_with("Watching ") {
-            "Watching for changes.".to_string()
-        } else {
-            truncate(&self.last_status, 48)
-        }
+    fn tooltip_progress_summary(&self, progress: &SyncProgress) -> String {
+        format!(
+            "{} - {}",
+            self.tooltip_progress_headline(progress),
+            truncate(&self.tooltip_progress_detail(progress), 28)
+        )
     }
 
     fn tooltip_progress_headline(&self, progress: &SyncProgress) -> String {
