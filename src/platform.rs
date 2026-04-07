@@ -138,10 +138,10 @@ pub fn prompt_for_update(current_version: &str, latest_version: &str) -> UpdateP
     }
 }
 
-pub fn show_wizard_loading_indicator(signal_path: &Path) -> Result<()> {
+pub fn show_wizard_loading_indicator(_signal_path: &Path) -> Result<()> {
     #[cfg(target_os = "windows")]
     {
-        let signal_path = powershell_single_quoted(&signal_path.display().to_string());
+        let signal_path = powershell_single_quoted(&_signal_path.display().to_string());
         let script = format!(
             "Add-Type -AssemblyName PresentationFramework; \
              Add-Type -AssemblyName PresentationCore; \

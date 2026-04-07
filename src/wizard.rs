@@ -1486,6 +1486,10 @@ fn normalize_optional_string(value: &mut Option<String>) {
 mod tests {
     use super::*;
 
+    fn expected_relative(parts: &[&str]) -> String {
+        parts.join(std::path::MAIN_SEPARATOR_STR)
+    }
+
     #[test]
     fn prepare_recovery_rewrites_invalid_json_and_keeps_backup() {
         let root = tempfile::tempdir().unwrap();
@@ -1564,20 +1568,34 @@ mod tests {
     fn normalize_job_source_text_accepts_nested_relative_windows_path() {
         let value =
             normalize_job_source_text(r"Projects\Folder_Alpha", Some(Path::new(r"S:\"))).unwrap();
-        assert_eq!(value, r"Projects\Folder_Alpha");
+        assert_eq!(value, expected_relative(&["Projects", "Folder_Alpha"]));
     }
 
     #[test]
     fn normalize_job_source_text_converts_absolute_path_under_root() {
-        let value =
-            normalize_job_source_text(r"S:\Projects\Folder_Alpha", Some(Path::new(r"S:\")))
-                .unwrap();
-        assert_eq!(value, r"Projects\Folder_Alpha");
+        #[cfg(target_os = "windows")]
+        let (input, root) = (
+            PathBuf::from(r"S:\Projects\Folder_Alpha"),
+            PathBuf::from(r"S:\"),
+        );
+        #[cfg(not(target_os = "windows"))]
+        let (input, root) = (
+            PathBuf::from("/Volumes/UsbRoot/Projects/Folder_Alpha"),
+            PathBuf::from("/Volumes/UsbRoot"),
+        );
+
+        let value = normalize_job_source_text(&input.display().to_string(), Some(&root)).unwrap();
+        assert_eq!(value, expected_relative(&["Projects", "Folder_Alpha"]));
     }
 
     #[test]
     fn normalize_job_source_from_path_rejects_folder_outside_root() {
-        let result = normalize_job_source_from_path(Path::new(r"T:\Other\Folder"), Path::new(r"S:\"));
+        #[cfg(target_os = "windows")]
+        let (path, root) = (Path::new(r"T:\Other\Folder"), Path::new(r"S:\"));
+        #[cfg(not(target_os = "windows"))]
+        let (path, root) = (Path::new("/Volumes/Other/Folder"), Path::new("/Volumes/UsbRoot"));
+
+        let result = normalize_job_source_from_path(path, root);
         assert!(result.is_err());
     }
 }
