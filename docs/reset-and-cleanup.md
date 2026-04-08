@@ -15,9 +15,14 @@ These scripts are intended to remove the app's per-user state, including:
 - `config.json`
 - `manifest.json`
 - `sync.log`
+- `update-state.json`
+- `wizard.log`
+- `config.invalid.*.json`
 - `shadow/`
+- current-user startup or autostart entries
+- single-instance lock artifacts
 
-They are for local cleanup. They are not meant to uninstall packaged binaries or remove release artifacts from system install locations.
+They are for local cleanup. They are not meant to uninstall packaged binaries, remove release artifacts from system install locations, or delete anything from the USB drive itself.
 
 ## When to Use Them
 

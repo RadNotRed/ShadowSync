@@ -11,16 +11,16 @@ ShadowSync keeps your USB folders mirrored on the work machine without copying e
 <div class="grid cards overview-grid" markdown>
 
 -   ### Start fast
-    Plug a USB drive, point the config at it, and ShadowSync automatically picks up new files every few seconds.
+    Plug in a USB drive, pick the real source folders in the wizard, and ShadowSync infers the mounted drive from those paths.
 
 -   ### USB stays primary
     Pull sync keeps the USB side as the source until you explicitly choose to push changes back.
 
 -   ### Shadow cache
-    All transfers land in the shadow folder before they touch your live workspace, so you can eject at any time.
+    Each job can stage through a shadow cache or run direct. Cached jobs reuse a local staging folder for faster repeat syncs.
 
 -   ### Tray + wizard control
-    Right-click for `Sync from USB now`, `Sync to USB now`, show logs, or reopen the setup wizard when the config is corrupted.
+    Right-click for `Sync from USB now`, `Sync to USB now`, update checks, logs, or the recovery wizard when the config breaks.
 
 </div>
 
@@ -30,20 +30,27 @@ ShadowSync keeps your USB folders mirrored on the work machine without copying e
 flowchart LR
     A["USB source"] --> B["Shadow cache"]
     B --> C["Local working folder"]
-    C -. "optionally push" .-> B
+    A -. "direct mode" .-> C
+    C -. "cached push" .-> B
+    C -. "direct push" .-> A
     B -. "publish back" .-> A
-    D["Cached manifest"] -- skips unchanged --> B
+    D["Local manifest + USB marker"] -- skips unchanged --> B
 ```
 
-ShadowSync normally pulls from the USB into the shadow cache and then into your working folder. If you enable push-back, the same cache is reused as the staging layer in the opposite direction.
+ShadowSync can run in two modes per job:
+
+- Cached mode: `USB -> shadow -> local` and `local -> shadow -> USB`
+- Direct mode: `USB -> local` and `local -> USB`
+
+The wizard now writes absolute USB source folders for each job and derives the drive root from those paths. Hand-edited configs can still use relative `source` values if `drive.letter` or `drive.path` is set.
 
 ## Quick start checklist
 
 1. Follow the [Getting Started guide](getting-started.md) to install or unzip ShadowSync for your platform.
-2. Use the setup wizard to declare the USB job (the source lives on the drive, the target is your working folder).
+2. Use the setup wizard to declare each USB job with an absolute USB source folder and an absolute local target folder.
 3. Watch the tray for progress—if another instance is running you get a safety prompt, and the wizard reopens if the config breaks.
-4. Use the `Sync to USB now` menu when you want to publish edits; the shadow cache reuses the same staging area.
-5. Eject from the tray when you are done. ShadowSync will run the configured post-sync commands and optionally clear the cache.
+4. Use the `Sync to USB now` menu when you want to publish edits; cached jobs reuse the same staging area and direct jobs write straight to the USB.
+5. Eject from the tray when you are done. If `eject_after_sync` is enabled, a successful sync can also eject automatically.
 
 ## Learn more
 

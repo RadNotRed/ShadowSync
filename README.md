@@ -14,19 +14,21 @@ ShadowSync is meant for a straightforward removable-drive workflow:
 
 ## ⚙️ What it does
 
-- Pull sync with `USB -> shadow cache -> local folder`
-- Optional push-back with `local folder -> shadow cache -> USB`
+- Pull sync with either `USB -> shadow cache -> local folder` or direct `USB -> local folder`
+- Optional push-back with either `local folder -> shadow cache -> USB` or direct `local folder -> USB`
 - Incremental syncing that skips unchanged files
-- Tray controls for sync, logs, folders, setup, and eject
+- Per-job cache mode with optional custom shadow roots
+- Tray controls for sync, updates, logs, folders, setup, and eject
 - Native Rust setup wizard
 - Single-instance protection and config recovery
+- Local manifest state plus a USB-side sync marker for safer incremental runs
 - Windows, macOS, and Linux release builds
 
 ## 🚀 Quick start
 
 1. Download the right release for your platform from the GitHub Releases page.
 2. Launch ShadowSync and let it create its local app data files.
-3. Open the setup wizard from the tray and configure your USB source and local target.
+3. Open the setup wizard from the tray and choose the actual USB source folder(s) plus the local target folder(s).
 4. Run `Sync from USB now` to pull files onto the machine.
 5. Use `Sync to USB now` only when you want to publish changes back to the drive.
 

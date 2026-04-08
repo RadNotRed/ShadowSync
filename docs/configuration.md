@@ -18,18 +18,20 @@ If you do want to edit it directly, the runtime config is stored in the app's lo
 
 ## The Important Parts
 
-- `drive`: where the USB is expected to appear
+- `drive`: where the USB is expected to appear when you are using manual or legacy path setup
 - `app`: sync behavior and watch settings
-- `cache`: shadow cache behavior
-- `jobs`: which USB folders map to which local folders
+- `cache`: shared shadow-cache defaults
+- `jobs`: which USB folders map to which local folders, and whether each job uses cache or direct mode
+
+The current wizard writes absolute USB source paths into `jobs[].source` and derives the drive root from them. Relative `source` paths still work in hand-edited configs when `drive.letter` or `drive.path` is set.
 
 ## `drive`
 
 | Field | Type | Default | Notes |
 | --- | --- | --- | --- |
-| `letter` | string or null | none | Windows-only drive letter such as `E` or `S` |
-| `path` | string or null | none | Absolute mounted USB path, used on macOS and Linux |
-| `eject_after_sync` | bool | `true` | Ejects the drive after a successful sync run |
+| `letter` | string or null | platform default in generated template | Windows-only drive letter such as `E` or `S`; mainly useful for manual configs |
+| `path` | string or null | platform default in generated template on macOS/Linux | Absolute mounted USB path; mainly useful for manual configs |
+| `eject_after_sync` | bool | `true` | Ejects the drive after a successful pull or push sync |
 
 ## `app`
 
@@ -45,8 +47,8 @@ If you do want to edit it directly, the runtime config is stored in the app's lo
 | Field | Type | Default | Notes |
 | --- | --- | --- | --- |
 | `root` | string or null | app-managed path | Optional custom location for the shadow cache root |
-| `shadow_copy` | bool | `true` | Keeps a local shadow copy for staging and reuse |
-| `clear_shadow_on_eject` | bool | `false` | Deletes the shadow cache when the drive is ejected or removed |
+| `shadow_copy` | bool | `true` | Compatibility flag; current behavior is controlled per job by `jobs[].use_shadow_cache` |
+| `clear_shadow_on_eject` | bool | template writes `false` | Deletes shadow-cache folders when the drive is removed or after an ejecting sync; set this explicitly in older configs |
 
 ## `compare`
 
@@ -56,22 +58,27 @@ If you do want to edit it directly, the runtime config is stored in the app's lo
 
 ## `jobs`
 
-Each job maps one USB-relative source path to one absolute PC target path.
+Each job maps one USB source folder to one absolute PC target path.
 
 | Field | Type | Default | Notes |
 | --- | --- | --- | --- |
 | `name` | string | none | Must be unique |
-| `source` | string | none | Relative path inside the USB root |
+| `source` | string | none | Absolute USB path preferred; relative path still works for manual/legacy configs |
 | `target` | string | none | Absolute local folder path |
 | `mirror_deletes` | bool | `true` | Follows source-side deletes for the active sync direction |
+| `use_shadow_cache` | bool | `true` | When `true`, the job stages through a per-job cache folder; when `false`, it syncs directly |
+| `shadow_root` | string or null | none | Optional per-job cache root; overrides `cache.root` for that job |
 
 ## Rules
 
-- `source` must stay inside the configured USB drive.
+- All jobs must point at the same mounted USB drive or mount root.
+- `source` should be an absolute USB folder path when created by the wizard.
+- Relative `source` values must stay inside the configured USB drive.
 - `target` must be an absolute local path.
-- On Windows, set `drive.letter`.
-- On macOS and Linux, set `drive.path`.
+- On Windows, `drive.letter` is only required if you rely on relative `source` paths.
+- On macOS and Linux, `drive.path` is only required if you rely on relative `source` paths.
 - Duplicate job names are rejected.
+- Relative cache roots are resolved under the app data folder.
 
 ## Example
 
@@ -88,6 +95,7 @@ Each job maps one USB-relative source path to one absolute PC target path.
     "poll_interval_seconds": 2
   },
   "cache": {
+    "root": null,
     "shadow_copy": true,
     "clear_shadow_on_eject": false
   },
@@ -97,9 +105,11 @@ Each job maps one USB-relative source path to one absolute PC target path.
   "jobs": [
     {
       "name": "ExampleType",
-      "source": "MVA\\Example Folder On USB",
+      "source": "S:\\MVA\\Example Folder On USB",
       "target": "C:\\Users\\user\\Documents\\ExampleFolder",
-      "mirror_deletes": true
+      "mirror_deletes": true,
+      "use_shadow_cache": true,
+      "shadow_root": null
     }
   ]
 }
