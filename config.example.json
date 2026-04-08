@@ -11,6 +11,7 @@
     "poll_interval_seconds": 2
   },
   "cache": {
+    "root": null,
     "shadow_copy": true,
     "clear_shadow_on_eject": false
   },
@@ -20,9 +21,11 @@
   "jobs": [
     {
       "name": "Documents",
-      "source": "Backups\\Documents",
+      "source": "E:\\Backups\\Documents",
       "target": "C:\\Users\\you\\Documents\\Important",
-      "mirror_deletes": true
+      "mirror_deletes": true,
+      "use_shadow_cache": true,
+      "shadow_root": null
     }
   ]
 }
