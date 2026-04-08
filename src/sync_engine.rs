@@ -206,13 +206,24 @@ where
     let mut total_copy_bytes = 0u64;
     for job in &config.jobs {
         let previous_job = manifest.jobs.remove(&job.name).unwrap_or_default();
-        let shadow_plan = plan_job(job, &previous_job, config, force_copy_all)?;
-        let local_plan = plan_local_sync(job, &shadow_plan.entries)?;
-        total_operations += shadow_plan.total_operations() + local_plan.total_operations();
-        total_copy_bytes += shadow_plan.total_copy_bytes() + local_plan.total_copy_bytes();
+        let source_plan = if job.use_shadow_cache {
+            plan_job(job, &previous_job, config, force_copy_all)?
+        } else {
+            plan_direct_pull(job, &previous_job, config, force_copy_all)?
+        };
+        let local_plan = if job.use_shadow_cache {
+            let plan = plan_local_sync(job, &source_plan.entries)?;
+            total_operations += source_plan.total_operations() + plan.total_operations();
+            total_copy_bytes += source_plan.total_copy_bytes() + plan.total_copy_bytes();
+            Some(plan)
+        } else {
+            total_operations += source_plan.total_operations();
+            total_copy_bytes += source_plan.total_copy_bytes();
+            None
+        };
         planned_jobs.push(PlannedJob {
             job,
-            shadow_plan,
+            source_plan,
             local_plan,
         });
     }
@@ -252,32 +263,57 @@ where
     };
 
     for (job_index, planned) in planned_jobs.into_iter().enumerate() {
-        let shadow_outcome = execute_shadow_plan(
-            planned.job,
-            &planned.shadow_plan,
-            config,
-            job_index,
-            &mut progress_state,
-            &mut progress,
-        )?;
-        let local_outcome = execute_local_plan(
-            planned.job,
-            &planned.local_plan,
-            config,
-            job_index,
-            &mut progress_state,
-            &mut progress,
-        )?;
+        let source_outcome = if planned.job.use_shadow_cache {
+            execute_shadow_plan(
+                planned.job,
+                &planned.source_plan,
+                config,
+                job_index,
+                &mut progress_state,
+                &mut progress,
+            )?
+        } else {
+            execute_direct_pull_plan(
+                planned.job,
+                &planned.source_plan,
+                config,
+                job_index,
+                &mut progress_state,
+                &mut progress,
+            )?
+        };
+        let local_outcome = if let Some(local_plan) = planned.local_plan.as_ref() {
+            execute_local_plan(
+                planned.job,
+                local_plan,
+                config,
+                job_index,
+                &mut progress_state,
+                &mut progress,
+            )?
+        } else {
+            ExecutionOutcome {
+                copied_files: 0,
+                deleted_files: 0,
+                bytes_written: 0,
+                next_files: BTreeMap::new(),
+            }
+        };
 
-        copied_files += shadow_outcome.copied_files + local_outcome.copied_files;
-        deleted_files += shadow_outcome.deleted_files + local_outcome.deleted_files;
-        skipped_files += planned.shadow_plan.skipped + planned.local_plan.skipped;
-        bytes_written += shadow_outcome.bytes_written + local_outcome.bytes_written;
+        copied_files += source_outcome.copied_files + local_outcome.copied_files;
+        deleted_files += source_outcome.deleted_files + local_outcome.deleted_files;
+        skipped_files += planned.source_plan.skipped
+            + planned
+                .local_plan
+                .as_ref()
+                .map(|plan| plan.skipped)
+                .unwrap_or_default();
+        bytes_written += source_outcome.bytes_written + local_outcome.bytes_written;
 
         next_manifest.jobs.insert(
             planned.job.name.clone(),
             JobManifest {
-                files: shadow_outcome.next_files,
+                files: source_outcome.next_files,
             },
         );
     }
@@ -363,13 +399,24 @@ where
     let mut total_copy_bytes = 0u64;
     for job in &config.jobs {
         let previous_job = manifest.jobs.remove(&job.name).unwrap_or_default();
-        let shadow_plan = plan_local_to_shadow(job, &previous_job, config, force_copy_all)?;
-        let usb_plan = plan_usb_sync(job, &config.drive_root, &shadow_plan.entries)?;
-        total_operations += shadow_plan.total_operations() + usb_plan.total_operations();
-        total_copy_bytes += shadow_plan.total_copy_bytes() + usb_plan.total_copy_bytes();
+        let source_plan = if job.use_shadow_cache {
+            plan_local_to_shadow(job, &previous_job, config, force_copy_all)?
+        } else {
+            plan_direct_push(job, &previous_job, config, force_copy_all)?
+        };
+        let usb_plan = if job.use_shadow_cache {
+            let plan = plan_usb_sync(job, &source_plan.entries)?;
+            total_operations += source_plan.total_operations() + plan.total_operations();
+            total_copy_bytes += source_plan.total_copy_bytes() + plan.total_copy_bytes();
+            Some(plan)
+        } else {
+            total_operations += source_plan.total_operations();
+            total_copy_bytes += source_plan.total_copy_bytes();
+            None
+        };
         planned_jobs.push(PlannedPushJob {
             job,
-            shadow_plan,
+            source_plan,
             usb_plan,
         });
     }
@@ -409,32 +456,53 @@ where
     };
 
     for (job_index, planned) in planned_jobs.into_iter().enumerate() {
-        let shadow_outcome = execute_shadow_plan(
-            planned.job,
-            &planned.shadow_plan,
-            config,
-            job_index,
-            &mut progress_state,
-            &mut progress,
-        )?;
-        let usb_outcome = execute_usb_plan(
-            planned.job,
-            &planned.usb_plan,
-            config,
-            job_index,
-            &mut progress_state,
-            &mut progress,
-        )?;
+        let source_outcome = if planned.job.use_shadow_cache {
+            execute_shadow_plan(
+                planned.job,
+                &planned.source_plan,
+                config,
+                job_index,
+                &mut progress_state,
+                &mut progress,
+            )?
+        } else {
+            execute_direct_push_plan(
+                planned.job,
+                &planned.source_plan,
+                config,
+                job_index,
+                &mut progress_state,
+                &mut progress,
+            )?
+        };
+        let usb_outcome = if let Some(usb_plan) = planned.usb_plan.as_ref() {
+            execute_usb_plan(
+                planned.job,
+                usb_plan,
+                config,
+                job_index,
+                &mut progress_state,
+                &mut progress,
+            )?
+        } else {
+            ExecutionOutcome {
+                copied_files: 0,
+                deleted_files: 0,
+                bytes_written: 0,
+                next_files: BTreeMap::new(),
+            }
+        };
 
-        copied_files += shadow_outcome.copied_files + usb_outcome.copied_files;
-        deleted_files += shadow_outcome.deleted_files + usb_outcome.deleted_files;
-        skipped_files += planned.shadow_plan.skipped + planned.usb_plan.skipped;
-        bytes_written += shadow_outcome.bytes_written + usb_outcome.bytes_written;
+        copied_files += source_outcome.copied_files + usb_outcome.copied_files;
+        deleted_files += source_outcome.deleted_files + usb_outcome.deleted_files;
+        skipped_files += planned.source_plan.skipped
+            + planned.usb_plan.as_ref().map(|plan| plan.skipped).unwrap_or_default();
+        bytes_written += source_outcome.bytes_written + usb_outcome.bytes_written;
 
         next_manifest.jobs.insert(
             planned.job.name.clone(),
             JobManifest {
-                files: shadow_outcome.next_files,
+                files: source_outcome.next_files,
             },
         );
     }
@@ -489,14 +557,14 @@ where
 
 struct PlannedJob<'a> {
     job: &'a ResolvedJob,
-    shadow_plan: JobPlan,
-    local_plan: LocalPlan,
+    source_plan: JobPlan,
+    local_plan: Option<LocalPlan>,
 }
 
 struct PlannedPushJob<'a> {
     job: &'a ResolvedJob,
-    shadow_plan: JobPlan,
-    usb_plan: LocalPlan,
+    source_plan: JobPlan,
+    usb_plan: Option<LocalPlan>,
 }
 
 #[derive(Debug, Default)]
@@ -508,14 +576,16 @@ struct ProgressState {
 }
 
 pub fn clear_shadow_cache(config: &ResolvedConfig) -> Result<()> {
-    if !config.cache.shadow_copy {
+    if !config.jobs.iter().any(|job| job.use_shadow_cache) {
         return Ok(());
     }
 
     for job in &config.jobs {
-        if job.shadow_dir.exists() {
-            fs::remove_dir_all(&job.shadow_dir)
-                .with_context(|| format!("failed to remove {}", job.shadow_dir.display()))?;
+        if let Some(shadow_dir) = job.shadow_dir.as_ref()
+            && shadow_dir.exists()
+        {
+            fs::remove_dir_all(shadow_dir)
+                .with_context(|| format!("failed to remove {}", shadow_dir.display()))?;
         }
     }
     Ok(())
@@ -527,10 +597,12 @@ fn plan_job(
     config: &ResolvedConfig,
     force_copy_all: bool,
 ) -> Result<JobPlan> {
-    let entries = scan_source_entries(job, &config.drive_root)?;
+    let entries = scan_source_entries(job)?;
     plan_shadow_sync(
         entries,
-        &job.shadow_dir,
+        job.shadow_dir
+            .as_deref()
+            .ok_or_else(|| anyhow::anyhow!("job '{}' does not have a shadow cache configured", job.name))?,
         previous,
         job.mirror_deletes,
         force_copy_all,
@@ -547,7 +619,43 @@ fn plan_local_to_shadow(
     let entries = scan_path_entries(&job.local_target)?;
     plan_shadow_sync(
         entries,
-        &job.shadow_dir,
+        job.shadow_dir
+            .as_deref()
+            .ok_or_else(|| anyhow::anyhow!("job '{}' does not have a shadow cache configured", job.name))?,
+        previous,
+        job.mirror_deletes,
+        force_copy_all,
+        config.compare.hash_on_metadata_change,
+    )
+}
+
+fn plan_direct_pull(
+    job: &ResolvedJob,
+    previous: &JobManifest,
+    config: &ResolvedConfig,
+    force_copy_all: bool,
+) -> Result<JobPlan> {
+    let entries = scan_source_entries(job)?;
+    plan_shadow_sync(
+        entries,
+        &job.local_target,
+        previous,
+        job.mirror_deletes,
+        force_copy_all,
+        config.compare.hash_on_metadata_change,
+    )
+}
+
+fn plan_direct_push(
+    job: &ResolvedJob,
+    previous: &JobManifest,
+    config: &ResolvedConfig,
+    force_copy_all: bool,
+) -> Result<JobPlan> {
+    let entries = scan_path_entries(&job.local_target)?;
+    plan_shadow_sync(
+        entries,
+        job.usb_source_root(),
         previous,
         job.mirror_deletes,
         force_copy_all,
@@ -643,10 +751,9 @@ fn plan_local_sync(job: &ResolvedJob, desired_entries: &[SourceEntry]) -> Result
 
 fn plan_usb_sync(
     job: &ResolvedJob,
-    drive_root: &Path,
     desired_entries: &[SourceEntry],
 ) -> Result<LocalPlan> {
-    let usb_target_root = job.usb_source_root(drive_root);
+    let usb_target_root = job.usb_source_root();
     plan_destination_sync(&usb_target_root, job.mirror_deletes, desired_entries)
 }
 
@@ -696,6 +803,10 @@ fn execute_shadow_plan(
     progress_state: &mut ProgressState,
     progress: &mut impl FnMut(SyncProgress),
 ) -> Result<ExecutionOutcome> {
+    let shadow_root = job
+        .shadow_dir
+        .as_deref()
+        .ok_or_else(|| anyhow::anyhow!("job '{}' does not have a shadow cache configured", job.name))?;
     let mut next_files = plan.next_files.clone();
     let mut copied_files = 0usize;
     let mut deleted_files = 0usize;
@@ -704,7 +815,7 @@ fn execute_shadow_plan(
 
     for action in &plan.copies {
         let relative_native = slash_path_to_native(&action.source.relative);
-        let shadow_destination = job.shadow_dir.join(&relative_native);
+        let shadow_destination = shadow_root.join(&relative_native);
 
         let hash = copy_with_optional_hash(
             &action.source.absolute,
@@ -741,7 +852,7 @@ fn execute_shadow_plan(
 
     for action in &plan.metadata_updates {
         let relative_native = slash_path_to_native(&action.relative);
-        let shadow_destination = job.shadow_dir.join(&relative_native);
+        let shadow_destination = shadow_root.join(&relative_native);
         preserve_modified_time_from_millis(&shadow_destination, action.modified_millis)?;
         next_files.insert(
             action.relative.clone(),
@@ -767,9 +878,9 @@ fn execute_shadow_plan(
 
     for relative in &plan.deletions {
         let relative_native = slash_path_to_native(relative);
-        let shadow_target = job.shadow_dir.join(&relative_native);
+        let shadow_target = shadow_root.join(&relative_native);
         remove_file_if_exists(&shadow_target)?;
-        prune_empty_ancestors(shadow_target.parent(), &job.shadow_dir)?;
+        prune_empty_ancestors(shadow_target.parent(), shadow_root)?;
 
         deleted_files += 1;
         progress_state.operations_done += 1;
@@ -804,8 +915,48 @@ fn execute_local_plan(
 ) -> Result<ExecutionOutcome> {
     execute_destination_plan(
         &job.name,
-        &job.shadow_dir,
+        job.shadow_dir
+            .as_deref()
+            .ok_or_else(|| anyhow::anyhow!("job '{}' does not have a shadow cache configured", job.name))?,
         &job.local_target,
+        plan,
+        config,
+        job_index,
+        progress_state,
+        progress,
+    )
+}
+
+fn execute_direct_pull_plan(
+    job: &ResolvedJob,
+    plan: &JobPlan,
+    config: &ResolvedConfig,
+    job_index: usize,
+    progress_state: &mut ProgressState,
+    progress: &mut impl FnMut(SyncProgress),
+) -> Result<ExecutionOutcome> {
+    execute_job_plan(
+        &job.name,
+        &job.local_target,
+        plan,
+        config,
+        job_index,
+        progress_state,
+        progress,
+    )
+}
+
+fn execute_direct_push_plan(
+    job: &ResolvedJob,
+    plan: &JobPlan,
+    config: &ResolvedConfig,
+    job_index: usize,
+    progress_state: &mut ProgressState,
+    progress: &mut impl FnMut(SyncProgress),
+) -> Result<ExecutionOutcome> {
+    execute_job_plan(
+        &job.name,
+        job.usb_source_root(),
         plan,
         config,
         job_index,
@@ -822,10 +973,12 @@ fn execute_usb_plan(
     progress_state: &mut ProgressState,
     progress: &mut impl FnMut(SyncProgress),
 ) -> Result<ExecutionOutcome> {
-    let usb_target_root = job.usb_source_root(&config.drive_root);
+    let usb_target_root = job.usb_source_root();
     execute_destination_plan(
         &job.name,
-        &job.shadow_dir,
+        job.shadow_dir
+            .as_deref()
+            .ok_or_else(|| anyhow::anyhow!("job '{}' does not have a shadow cache configured", job.name))?,
         &usb_target_root,
         plan,
         config,
@@ -906,9 +1059,114 @@ fn execute_destination_plan(
     })
 }
 
-fn scan_source_entries(job: &ResolvedJob, drive_root: &Path) -> Result<Vec<SourceEntry>> {
-    let usb_source_root = job.usb_source_root(drive_root);
-    scan_path_entries(&usb_source_root)
+fn scan_source_entries(job: &ResolvedJob) -> Result<Vec<SourceEntry>> {
+    scan_path_entries(job.usb_source_root())
+}
+
+fn execute_job_plan(
+    job_name: &str,
+    destination_root: &Path,
+    plan: &JobPlan,
+    config: &ResolvedConfig,
+    job_index: usize,
+    progress_state: &mut ProgressState,
+    progress: &mut impl FnMut(SyncProgress),
+) -> Result<ExecutionOutcome> {
+    let mut next_files = plan.next_files.clone();
+    let mut copied_files = 0usize;
+    let mut deleted_files = 0usize;
+    let mut bytes_written = 0u64;
+    let mut created_directories = DirectoryCache::default();
+
+    for action in &plan.copies {
+        let relative_native = slash_path_to_native(&action.source.relative);
+        let destination = destination_root.join(&relative_native);
+
+        let hash = copy_with_optional_hash(
+            &action.source.absolute,
+            &destination,
+            action.source.modified_millis,
+            action.known_hash.as_deref(),
+            &mut created_directories,
+        )?;
+
+        next_files.insert(
+            action.source.relative.clone(),
+            FileRecord {
+                size: action.source.size,
+                modified_millis: action.source.modified_millis,
+                sha256: hash,
+            },
+        );
+        copied_files += 1;
+        bytes_written += action.source.size;
+        progress_state.operations_done += 1;
+        progress_state.bytes_done += action.source.size;
+        progress(SyncProgress {
+            current_job: job_name.to_string(),
+            job_index: job_index + 1,
+            job_count: config.jobs.len(),
+            operations_done: progress_state.operations_done,
+            operations_total: progress_state.operations_total,
+            bytes_done: progress_state.bytes_done,
+            bytes_total: progress_state.bytes_total,
+            current_path: Some(action.source.relative.clone()),
+            phase: SyncPhase::Copying,
+        });
+    }
+
+    for action in &plan.metadata_updates {
+        let relative_native = slash_path_to_native(&action.relative);
+        let destination = destination_root.join(&relative_native);
+        preserve_modified_time_from_millis(&destination, action.modified_millis)?;
+        next_files.insert(
+            action.relative.clone(),
+            FileRecord {
+                size: action.size,
+                modified_millis: action.modified_millis,
+                sha256: action.sha256.clone(),
+            },
+        );
+        progress_state.operations_done += 1;
+        progress(SyncProgress {
+            current_job: job_name.to_string(),
+            job_index: job_index + 1,
+            job_count: config.jobs.len(),
+            operations_done: progress_state.operations_done,
+            operations_total: progress_state.operations_total,
+            bytes_done: progress_state.bytes_done,
+            bytes_total: progress_state.bytes_total,
+            current_path: Some(action.relative.clone()),
+            phase: SyncPhase::Finalizing,
+        });
+    }
+
+    for relative in &plan.deletions {
+        let relative_native = slash_path_to_native(relative);
+        let destination = destination_root.join(&relative_native);
+        remove_file_if_exists(&destination)?;
+        prune_empty_ancestors(destination.parent(), destination_root)?;
+        deleted_files += 1;
+        progress_state.operations_done += 1;
+        progress(SyncProgress {
+            current_job: job_name.to_string(),
+            job_index: job_index + 1,
+            job_count: config.jobs.len(),
+            operations_done: progress_state.operations_done,
+            operations_total: progress_state.operations_total,
+            bytes_done: progress_state.bytes_done,
+            bytes_total: progress_state.bytes_total,
+            current_path: Some(relative.clone()),
+            phase: SyncPhase::Deleting,
+        });
+    }
+
+    Ok(ExecutionOutcome {
+        copied_files,
+        deleted_files,
+        bytes_written,
+        next_files,
+    })
 }
 
 fn scan_path_entries(root: &Path) -> Result<Vec<SourceEntry>> {
@@ -1247,10 +1505,11 @@ mod tests {
             compare: crate::config::CompareConfig::default(),
             jobs: vec![ResolvedJob {
                 name: "docs".to_string(),
-                usb_source_relative: PathBuf::from("Docs"),
+                usb_source_root: usb_source.clone(),
                 local_target: target,
                 mirror_deletes: true,
-                shadow_dir: cache.join("docs"),
+                use_shadow_cache: true,
+                shadow_dir: Some(cache.join("docs")),
             }],
         }
     }
@@ -1260,7 +1519,8 @@ mod tests {
         let temp = TempDir::new().unwrap();
         let config = sample_config(temp.path());
         let job = &config.jobs[0];
-        let usb_source = job.usb_source_root(&config.drive_root);
+        let usb_source = job.usb_source_root();
+        let shadow_dir = job.shadow_dir.as_ref().unwrap();
 
         make_file(&usb_source.join("keep.txt"), "same");
         make_file(&usb_source.join("changed.txt"), "new");
@@ -1268,7 +1528,7 @@ mod tests {
         let keep_metadata = fs::metadata(usb_source.join("keep.txt")).unwrap();
         copy_without_hash(
             &usb_source.join("keep.txt"),
-            &job.shadow_dir.join("keep.txt"),
+            &shadow_dir.join("keep.txt"),
             unix_millis(keep_metadata.modified().unwrap()).unwrap(),
             &mut directories,
         )
@@ -1308,7 +1568,8 @@ mod tests {
         let temp = TempDir::new().unwrap();
         let config = sample_config(temp.path());
         let job = &config.jobs[0];
-        let usb_source = job.usb_source_root(&config.drive_root);
+        let usb_source = job.usb_source_root();
+        let shadow_dir = job.shadow_dir.as_ref().unwrap();
 
         let file_path = usb_source.join("same.txt");
         make_file(&file_path, "payload");
@@ -1316,7 +1577,7 @@ mod tests {
         let mut directories = DirectoryCache::default();
         copy_without_hash(
             &file_path,
-            &job.shadow_dir.join("same.txt"),
+            &shadow_dir.join("same.txt"),
             unix_millis(metadata.modified().unwrap()).unwrap(),
             &mut directories,
         )
@@ -1342,7 +1603,7 @@ mod tests {
         let temp = TempDir::new().unwrap();
         let config = sample_config(temp.path());
         let job = &config.jobs[0];
-        let usb_source = job.usb_source_root(&config.drive_root);
+        let usb_source = job.usb_source_root();
 
         let file_path = usb_source.join("cached.txt");
         make_file(&file_path, "payload");
@@ -1369,7 +1630,8 @@ mod tests {
         let temp = TempDir::new().unwrap();
         let config = sample_config(temp.path());
         let job = &config.jobs[0];
-        let usb_source = job.usb_source_root(&config.drive_root);
+        let usb_source = job.usb_source_root();
+        let shadow_dir = job.shadow_dir.as_ref().unwrap();
 
         let file_path = usb_source.join("same-content.txt");
         make_file(&file_path, "payload");
@@ -1380,7 +1642,7 @@ mod tests {
         let mut directories = DirectoryCache::default();
         copy_without_hash(
             &file_path,
-            &job.shadow_dir.join("same-content.txt"),
+            &shadow_dir.join("same-content.txt"),
             old_millis,
             &mut directories,
         )
@@ -1404,7 +1666,7 @@ mod tests {
             size: metadata.len(),
             modified_millis: new_millis,
         }];
-        let plan = plan_shadow_sync(entries, &job.shadow_dir, &previous, true, false, true).unwrap();
+        let plan = plan_shadow_sync(entries, shadow_dir, &previous, true, false, true).unwrap();
 
         assert_eq!(plan.copies.len(), 0);
         assert_eq!(plan.metadata_updates.len(), 1);
@@ -1435,11 +1697,8 @@ mod tests {
         let report = run_sync_to_usb(&config, &paths).unwrap();
         assert!(report.has_activity());
 
-        let usb_file = job
-            .usb_source_root(&config.drive_root)
-            .join("folder")
-            .join("new.txt");
-        let shadow_file = job.shadow_dir.join("folder").join("new.txt");
+        let usb_file = job.usb_source_root().join("folder").join("new.txt");
+        let shadow_file = job.shadow_dir.as_ref().unwrap().join("folder").join("new.txt");
         assert_eq!(fs::read_to_string(usb_file).unwrap(), "hello from local");
         assert_eq!(fs::read_to_string(shadow_file).unwrap(), "hello from local");
     }

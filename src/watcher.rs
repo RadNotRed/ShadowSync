@@ -98,7 +98,7 @@ fn usb_watch_roots(config: &ResolvedConfig) -> Vec<PathBuf> {
     let mut roots = Vec::new();
     let mut seen = HashSet::new();
     for job in &config.jobs {
-        let source_root = job.usb_source_root(&config.drive_root);
+        let source_root = job.usb_source_root().to_path_buf();
         if let Some(root) = nearest_existing_root(&source_root, Some(&config.drive_root)) {
             push_unique_root(&mut roots, &mut seen, root);
         }

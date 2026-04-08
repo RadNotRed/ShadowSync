@@ -14,6 +14,7 @@ const WINDOWS_ICON_SIZES: [u32; 10] = [16, 20, 24, 32, 40, 48, 64, 96, 128, 256]
 
 fn main() {
     println!("cargo:rerun-if-changed=.github/assets/icon.svg");
+    println!("cargo:rerun-if-changed=.github/assets/Phosphor.ttf");
     println!("cargo:rerun-if-changed=Cargo.toml");
 
     if let Err(error) = generate_release_assets() {

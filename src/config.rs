@@ -164,15 +164,21 @@ pub struct JobConfig {
     pub target: String,
     #[serde(default = "default_true")]
     pub mirror_deletes: bool,
+    #[serde(default = "default_true")]
+    pub use_shadow_cache: bool,
+    #[serde(default)]
+    pub shadow_root: Option<String>,
 }
 
 impl Default for JobConfig {
     fn default() -> Self {
         Self {
             name: "Documents".to_string(),
-            source: default_job_source().to_string(),
+            source: default_job_usb_source().display().to_string(),
             target: default_job_target(),
             mirror_deletes: true,
+            use_shadow_cache: true,
+            shadow_root: None,
         }
     }
 }
@@ -210,15 +216,16 @@ pub struct ResolvedCacheConfig {
 #[derive(Debug, Clone)]
 pub struct ResolvedJob {
     pub name: String,
-    pub usb_source_relative: PathBuf,
+    pub usb_source_root: PathBuf,
     pub local_target: PathBuf,
     pub mirror_deletes: bool,
-    pub shadow_dir: PathBuf,
+    pub use_shadow_cache: bool,
+    pub shadow_dir: Option<PathBuf>,
 }
 
 impl ResolvedJob {
-    pub fn usb_source_root(&self, drive_root: &Path) -> PathBuf {
-        drive_root.join(&self.usb_source_relative)
+    pub fn usb_source_root(&self) -> &Path {
+        &self.usb_source_root
     }
 }
 
@@ -269,8 +276,6 @@ fn validate_config(config: AppConfig, paths: &AppPaths) -> Result<ResolvedConfig
         "config.json must contain at least one sync job"
     );
 
-    let (drive_label, drive_root) = resolve_drive_location(&config.drive)?;
-
     let poll_interval_seconds = config.app.poll_interval_seconds.clamp(1, 60);
     let app = AppBehavior {
         sync_on_insert: config.app.sync_on_insert,
@@ -293,8 +298,14 @@ fn validate_config(config: AppConfig, paths: &AppPaths) -> Result<ResolvedConfig
         clear_shadow_on_eject: config.cache.clear_shadow_on_eject,
     };
 
+    let configured_drive_root = resolve_drive_location(&config.drive).ok().map(|(_, root)| root);
+    let configured_drive_label = configured_drive_root
+        .as_ref()
+        .map(|root| describe_drive_root(root));
+
     let mut names = HashSet::new();
     let mut jobs = Vec::with_capacity(config.jobs.len());
+    let mut inferred_drive_root: Option<PathBuf> = configured_drive_root.clone();
     for job in config.jobs {
         ensure!(
             names.insert(job.name.clone()),
@@ -306,31 +317,63 @@ fn validate_config(config: AppConfig, paths: &AppPaths) -> Result<ResolvedConfig
             "job names must not be empty"
         );
 
-        let usb_source_relative = normalize_relative_target(&job.source)
-            .with_context(|| format!("job '{}' source must be a relative path on the USB drive", job.name))?;
+        let usb_source_root = resolve_job_usb_source_root(&job.source, configured_drive_root.as_deref())
+            .with_context(|| format!("job '{}' source must be a valid USB folder", job.name))?;
+        let job_drive_root = infer_drive_root(&usb_source_root)
+            .ok_or_else(|| anyhow!("job '{}' source must point at a mounted USB location", job.name))?;
+        if let Some(existing_root) = inferred_drive_root.as_ref() {
+            ensure!(
+                paths_equivalent_for_drive(existing_root, &job_drive_root),
+                "all jobs must point at the same USB drive or mount root"
+            );
+        } else {
+            inferred_drive_root = Some(job_drive_root);
+        }
         let local_target = PathBuf::from(job.target.trim());
         ensure!(
             local_target.is_absolute(),
             "job '{}' target must be an absolute local path",
             job.name
         );
-        let shadow_dir = cache.shadow_root.join(sanitize_name(&job.name));
+        let use_shadow_cache = job.use_shadow_cache;
+        let shadow_dir = if use_shadow_cache {
+            let job_shadow_root = job
+                .shadow_root
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(PathBuf::from)
+                .unwrap_or_else(|| cache.shadow_root.clone());
+            Some(normalize_cache_root(job_shadow_root, &paths.app_dir)?.join(sanitize_name(&job.name)))
+        } else {
+            None
+        };
 
         jobs.push(ResolvedJob {
             name: job.name,
-            usb_source_relative,
+            usb_source_root,
             local_target,
             mirror_deletes: job.mirror_deletes,
+            use_shadow_cache,
             shadow_dir,
         });
     }
+
+    let drive_root = inferred_drive_root
+        .or(configured_drive_root)
+        .ok_or_else(|| anyhow!("set a USB source folder before saving"))?;
+    let drive_label = configured_drive_label.unwrap_or_else(|| describe_drive_root(&drive_root));
+    let any_shadow_cache = jobs.iter().any(|job| job.use_shadow_cache);
 
     Ok(ResolvedConfig {
         drive_label,
         drive_root,
         eject_after_sync: config.drive.eject_after_sync,
         app,
-        cache,
+        cache: ResolvedCacheConfig {
+            shadow_copy: any_shadow_cache,
+            ..cache
+        },
         compare: config.compare,
         jobs,
     })
@@ -434,6 +477,82 @@ fn normalize_relative_target(value: &str) -> Result<PathBuf> {
 fn looks_like_windows_absolute(value: &str) -> bool {
     let bytes = value.as_bytes();
     bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':'
+}
+
+fn resolve_job_usb_source_root(value: &str, drive_root: Option<&Path>) -> Result<PathBuf> {
+    let trimmed = value.trim();
+    ensure!(!trimmed.is_empty(), "source path must not be empty");
+
+    let candidate = PathBuf::from(trimmed);
+    if candidate.is_absolute() {
+        return Ok(candidate);
+    }
+
+    let drive_root =
+        drive_root.ok_or_else(|| anyhow!("source must be an absolute USB folder path"))?;
+    let relative = normalize_relative_target(trimmed)?;
+    Ok(drive_root.join(relative))
+}
+
+fn infer_drive_root(path: &Path) -> Option<PathBuf> {
+    #[cfg(target_os = "windows")]
+    {
+        let mut root = PathBuf::new();
+        for component in path.components() {
+            match component {
+                Component::Prefix(prefix) => root.push(prefix.as_os_str()),
+                Component::RootDir => {
+                    root.push(std::path::MAIN_SEPARATOR.to_string());
+                    return Some(root);
+                }
+                Component::Normal(_) => break,
+                _ => {}
+            }
+        }
+        return None;
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        let mut components = path.components();
+        match components.next() {
+            Some(Component::RootDir) => {}
+            _ => return None,
+        }
+        let mut root = PathBuf::from(std::path::MAIN_SEPARATOR.to_string());
+        let first = components.next()?;
+        root.push(component_as_os_str(first)?);
+        let second = components.next();
+        if let Some(component) = second {
+            root.push(component_as_os_str(component)?);
+        }
+        Some(root)
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn component_as_os_str(component: Component<'_>) -> Option<&std::ffi::OsStr> {
+    match component {
+        Component::Normal(value) => Some(value),
+        _ => None,
+    }
+}
+
+fn describe_drive_root(root: &Path) -> String {
+    root.display().to_string()
+}
+
+fn paths_equivalent_for_drive(left: &Path, right: &Path) -> bool {
+    #[cfg(target_os = "windows")]
+    {
+        left.display()
+            .to_string()
+            .eq_ignore_ascii_case(&right.display().to_string())
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        left == right
+    }
 }
 
 pub fn rel_path_string(path: &Path) -> Result<String> {
@@ -556,14 +675,14 @@ fn default_mount_path() -> &'static str {
     }
 }
 
-fn default_job_source() -> &'static str {
+fn default_job_usb_source() -> PathBuf {
     #[cfg(target_os = "windows")]
     {
-        "Backups\\Documents"
+        PathBuf::from(r"E:\Backups\Documents")
     }
     #[cfg(not(target_os = "windows"))]
     {
-        "Backups/Documents"
+        PathBuf::from("/Volumes/USB/Backups/Documents")
     }
 }
 

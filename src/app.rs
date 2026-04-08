@@ -599,7 +599,7 @@ impl App {
             key.push('|');
             key.push_str(&job.name);
             key.push('|');
-            key.push_str(&job.usb_source_root(&config.drive_root).display().to_string());
+            key.push_str(&job.usb_source_root().display().to_string());
             key.push('|');
             key.push_str(&job.local_target.display().to_string());
         }
